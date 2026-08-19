@@ -47,17 +47,60 @@ class VectorQuantizer(nn.Module):
     this batch, and dead entries get restarted from live encoder output.
     """
 
-    def __init__(self, n_codes=8192, dim=256, decay=0.99, eps=1e-5):
+    def __init__(self, n_codes=8192, dim=256, decay=0.99, eps=1e-5,
+                 restart_below=1.0):
         super().__init__()
         self.n_codes, self.dim, self.decay, self.eps = n_codes, dim, decay, eps
+        self.restart_below = restart_below
         embed = torch.randn(n_codes, dim)
         self.register_buffer("embed", embed)
         self.register_buffer("cluster_size", torch.zeros(n_codes))
         self.register_buffer("embed_avg", embed.clone())
+        self.register_buffer("inited", torch.zeros(1))
+
+    def _seed_from(self, flat):
+        """Start the codebook on real encoder output instead of noise.
+
+        A Gaussian codebook and an encoder whose outputs live at a different
+        scale collapse immediately: every vector has the same nearest entry, EMA
+        drags that one entry around, and the other 8191 are never selected
+        again. Measured on the first smoke test — codes 1/256 after 30 steps.
+        Seeding from the first real batch puts the entries where the data is.
+        """
+        n = flat.shape[0]
+        idx = torch.randint(0, n, (self.n_codes,), device=flat.device)
+        pick = flat[idx]
+        if n < self.n_codes:                      # tiny batch: jitter the copies
+            pick = pick + 0.01 * torch.randn_like(pick)
+        self.embed.copy_(pick)
+        self.embed_avg.copy_(pick)
+        self.cluster_size.fill_(1.0)
+        self.inited.fill_(1.0)
+
+    def _restart_dead(self, flat):
+        """Reseed entries nothing has selected lately from live encoder output.
+
+        Without this the vocabulary only ever shrinks: an unselected entry gets
+        no gradient and no EMA update, so it can never come back on its own. A
+        codebook that decays to a few dozen live entries produces uniform mush —
+        and the reconstruction loss keeps falling the whole time, so the curve
+        will not tell you."""
+        dead = self.cluster_size < self.restart_below
+        k = int(dead.sum())
+        if k == 0:
+            return 0
+        idx = torch.randint(0, flat.shape[0], (k,), device=flat.device)
+        self.embed[dead] = flat[idx]
+        self.embed_avg[dead] = flat[idx]
+        self.cluster_size[dead] = 1.0
+        return k
 
     def forward(self, z):
         b, c, h, w = z.shape
         flat = z.permute(0, 2, 3, 1).reshape(-1, c)
+
+        if self.training and float(self.inited) == 0.0:
+            self._seed_from(flat.detach())
 
         d = (flat.pow(2).sum(1, keepdim=True)
              - 2 * flat @ self.embed.t()
@@ -72,6 +115,7 @@ class VectorQuantizer(nn.Module):
             n = self.cluster_size.sum()
             cluster = (self.cluster_size + self.eps) / (n + self.n_codes * self.eps) * n
             self.embed.copy_(self.embed_avg / cluster.unsqueeze(1))
+            self._restart_dead(flat.detach())
 
         # Commitment only: the codebook itself moves by EMA, so the encoder is
         # the only thing this gradient should be pulling on.

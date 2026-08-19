@@ -13,10 +13,18 @@ parameters. We will not reach that, but the difference between 300k and 3M is
 the difference between "sushi z zieleniny" meaning something and meaning
 nothing.
 
-Images are stored at 256px as raw uint8, which is only an intermediate: once the
-VQ-VAE exists, these get encoded once into 256 tokens each — 512 bytes an image
-against 196 KB — and the pixels can be thrown away. That step is what makes
-millions of pairs fit in gigabytes.
+Images are stored as JPEG bytes, not raw uint8. Raw was the obvious first choice
+and the wrong one: it costs 196 KB an image, which caps a shard at 90k pairs
+against Kaggle's 20 GB output limit, so a million pairs would have wanted eleven
+shards and ~195 GB. JPEG at quality 88 costs ~25 KB, which is roughly 700k pairs
+in the same shard. The pictures arrive as JPEG in the first place, so this is
+mostly a matter of not throwing the compression away.
+
+The artefacts do not matter here — the model exists to make ugly pictures, and
+the 2021 VQGANs whose look it is chasing were trained on web JPEGs too.
+
+Even this is an intermediate: once the VQ-VAE exists, each image becomes 256
+tokens — 512 bytes against 196 KB raw — and the pixels can be dropped.
 """
 
 import argparse
@@ -33,7 +41,8 @@ from PIL import Image
 UA = {"User-Agent": "Mozilla/5.0 (compatible; g-weird-prep/1.0)"}
 
 
-def fetch_one(url, res, timeout=10):
+def fetch_one(url, res, quality=88, timeout=10):
+    """Download, square-crop, resize, and hand back JPEG bytes."""
     try:
         r = requests.get(url, headers=UA, timeout=timeout, stream=True)
         if r.status_code != 200:
@@ -43,7 +52,10 @@ def fetch_one(url, res, timeout=10):
         # that grey bars are part of what a picture looks like.
         s = min(img.size)
         l, t = (img.width - s) // 2, (img.height - s) // 2
-        return np.asarray(img.crop((l, t, l + s, t + s)).resize((res, res), Image.LANCZOS))
+        img = img.crop((l, t, l + s, t + s)).resize((res, res), Image.LANCZOS)
+        buf = io.BytesIO()
+        img.save(buf, format="JPEG", quality=quality)
+        return buf.getvalue()
     except Exception:
         return None
 
@@ -63,9 +75,11 @@ def main():
     if a.skip:
         ds = ds.skip(a.skip)
 
-    images_path = f"{a.out_prefix}_images.bin"
+    # Variable-length records now, so the reader needs an offset table; raw
+    # uint8 could be indexed by arithmetic alone.
+    images_path = f"{a.out_prefix}_images.jpgbin"
     fh = open(images_path, "wb")
-    captions, kept, seen = [], 0, 0
+    captions, offsets, kept, seen = [], [0], 0, 0
 
     def rows():
         for row in ds:
@@ -88,7 +102,8 @@ def main():
                 arr = f.result()
                 if arr is None:
                     continue
-                fh.write(arr.tobytes())
+                fh.write(arr)
+                offsets.append(offsets[-1] + len(arr))
                 captions.append(cap_of)
                 kept += 1
                 if kept % 5000 == 0:
@@ -97,16 +112,22 @@ def main():
         for f, cap_of in pending.items():
             arr = f.result()
             if arr is not None and kept < a.want:
-                fh.write(arr.tobytes())
+                fh.write(arr)
+                offsets.append(offsets[-1] + len(arr))
                 captions.append(cap_of)
                 kept += 1
     fh.close()
 
     with open(f"{a.out_prefix}_captions.json", "w") as f:
         json.dump(captions, f, ensure_ascii=False)
+    with open(f"{a.out_prefix}_offsets.json", "w") as f:
+        json.dump(offsets, f)
     with open(f"{a.out_prefix}_meta.json", "w") as f:
-        json.dump({"n": kept, "res": a.res, "skipped": a.skip, "seen": seen}, f)
-    print(f"gotowe: {kept} par, {os.path.getsize(images_path)/1e9:.2f} GB, "
+        json.dump({"n": kept, "res": a.res, "skipped": a.skip, "seen": seen,
+                   "format": "jpeg"}, f)
+    size = os.path.getsize(images_path)
+    print(f"gotowe: {kept} par, {size/1e9:.2f} GB, "
+          f"{size/max(kept,1)/1024:.1f} kB na obraz, "
           f"{100*kept/max(seen,1):.0f}% linkow zylo", flush=True)
 
 

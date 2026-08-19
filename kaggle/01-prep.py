@@ -14,16 +14,19 @@ import sys
 REPO = "https://github.com/JerzySukiennik/g-weird.git"
 WORK = "/kaggle/working"
 
-# 200k pairs per shard at 256px is ~39 GB of raw uint8 — too much for Kaggle's
-# 20 GB output. 90k lands at ~17.7 GB, inside it with room to spare. The pixels
-# are an intermediate anyway: once the VQ-VAE exists they become 512 bytes an
-# image and the shards can be re-encoded and dropped.
-WANT = 90000
+# 400k now that images are stored as JPEG rather than raw uint8. Measured on the
+# first two shards: raw cost 196 kB an image, which capped a shard at 90k pairs
+# against Kaggle's 20 GB output limit. JPEG at quality 88 costs ~25 kB, so the
+# same disk holds seven or eight times as many pairs — and pair count is what
+# buys prompt obedience at this scale.
+WANT = 400000
 SHARD = int(os.environ.get("GWEIRD_SHARD", "0"))
 
-# Conceptual Captions rows are cheap to skip (streaming metadata) and roughly
-# 70-80% of the links still resolve, so budget ~130k rows consumed per shard.
-SKIP = SHARD * 130000
+# Measured on shards 0 and 1, not guessed: 62% of the links still resolve, so a
+# shard consumes want/0.62 rows. The first two shards took rows 0-145729 and
+# 130000-275000 respectively at the old 90k quota; anything from 300000 up is
+# untouched.
+SKIP = 300000 + (SHARD - 2) * 650000
 
 subprocess.run(["git", "clone", "--depth", "1", REPO, f"{WORK}/g-weird"], check=True)
 os.chdir(f"{WORK}/g-weird")
