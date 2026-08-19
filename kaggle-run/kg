@@ -1,0 +1,13 @@
+#!/bin/bash
+# Kaggle CLI na koncie TEGO projektu (jerzysukiennik), niezaleznie od globalnego
+# ~/.kaggle, ktorego uzywa G-Mini (konto jerzysukienik, jedno "n").
+#
+# Token idzie przez KAGGLE_API_TOKEN, NIE przez plik w KAGGLE_CONFIG_DIR.
+# Plik nie dziala: klient nie zglasza bledu, tylko po cichu cofa sie do
+# ~/.kaggle i uzywa NIE TEGO konta. Kosztowalo to trzy bledne diagnozy
+# "jestes zalogowany na zle konto", zanim test z odcietym HOME pokazal prawde.
+PROJ="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+TOKFILE="$PROJ/kaggle-run/.kaggle/token"
+[ -s "$TOKFILE" ] || { echo "BRAK TOKENU: $TOKFILE (patrz kaggle-run/.kaggle/README.md)" >&2; exit 1; }
+export KAGGLE_API_TOKEN="$(tr -d '[:space:]' < "$TOKFILE")"
+exec "/Users/jurek/Downloads/Claude/Projects/AIe/G-Images/.venv/bin/python" -m kaggle "$@"
