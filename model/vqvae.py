@@ -1,0 +1,153 @@
+"""VQ-VAE: the part of G-Weird that decides what "wrong" looks like.
+
+The encoder and decoder are lifted from G-Images' autoencoder, which was written
+and tested for 2.2 — same ResBlock/AttnBlock stack, same shape. What is added
+here is the quantizer, and it is the whole aesthetic argument of this project.
+
+A continuous autoencoder degrades GENTLY: starve it and you get blur, which
+reads as "low quality" and is boring. A quantizer degrades HARSHLY: every patch
+must be replaced by the nearest of N codebook entries, so a face the codebook
+has no entry for comes back as the closest thing it does have. That is where
+melted features and wrong eye counts come from — Craiyon's signature, and the
+thing Jurek actually asked for.
+
+Two numbers control how uncanny the result is:
+
+  codebook_size  — fewer entries, cruder substitutions. 8192 is roughly what
+                   2021-era VQGANs used; dropping it makes things stranger.
+  16x16 grid     — 256 tokens per image, from 256px. That is the DALL-E mini
+                   layout, and four times cheaper for the transformer than the
+                   32x32 grid 2.2's autoencoder produces. The extra downsample
+                   is the reason this file does not simply import that class.
+
+Commitment loss and the EMA codebook are the standard fixes for the standard
+failure: without them most entries are never selected and the effective
+vocabulary collapses to a few dozen, which produces uniform mush rather than
+interesting wrongness.
+"""
+
+import sys
+from pathlib import Path
+
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from autoencoder_base import ResBlock, AttnBlock  # noqa: E402
+
+
+class VectorQuantizer(nn.Module):
+    """Nearest-neighbour lookup with an EMA-updated codebook.
+
+    EMA rather than a learned embedding matrix because the gradient path to
+    unused entries is zero — an entry that stops being selected can never come
+    back on its own, and the codebook quietly shrinks to whatever it started
+    near. EMA updates every selected entry toward the mean of what it matched
+    this batch, and dead entries get restarted from live encoder output.
+    """
+
+    def __init__(self, n_codes=8192, dim=256, decay=0.99, eps=1e-5):
+        super().__init__()
+        self.n_codes, self.dim, self.decay, self.eps = n_codes, dim, decay, eps
+        embed = torch.randn(n_codes, dim)
+        self.register_buffer("embed", embed)
+        self.register_buffer("cluster_size", torch.zeros(n_codes))
+        self.register_buffer("embed_avg", embed.clone())
+
+    def forward(self, z):
+        b, c, h, w = z.shape
+        flat = z.permute(0, 2, 3, 1).reshape(-1, c)
+
+        d = (flat.pow(2).sum(1, keepdim=True)
+             - 2 * flat @ self.embed.t()
+             + self.embed.pow(2).sum(1))
+        idx = d.argmin(1)
+        q = self.embed[idx].view(b, h, w, c).permute(0, 3, 1, 2)
+
+        if self.training:
+            onehot = F.one_hot(idx, self.n_codes).type(flat.dtype)
+            self.cluster_size.mul_(self.decay).add_(onehot.sum(0), alpha=1 - self.decay)
+            self.embed_avg.mul_(self.decay).add_(onehot.t() @ flat, alpha=1 - self.decay)
+            n = self.cluster_size.sum()
+            cluster = (self.cluster_size + self.eps) / (n + self.n_codes * self.eps) * n
+            self.embed.copy_(self.embed_avg / cluster.unsqueeze(1))
+
+        # Commitment only: the codebook itself moves by EMA, so the encoder is
+        # the only thing this gradient should be pulling on.
+        loss = F.mse_loss(q.detach(), z)
+        # Straight-through: the decoder sees quantized values, the encoder gets
+        # the gradient as if nothing had been rounded.
+        q = z + (q - z).detach()
+        return q, loss, idx.view(b, h, w)
+
+    def lookup(self, idx):
+        """Token grid -> latent, for decoding what the transformer dreams up."""
+        b, h, w = idx.shape
+        return self.embed[idx.reshape(-1)].view(b, h, w, self.dim).permute(0, 3, 1, 2)
+
+
+class _Down(nn.Module):
+    """Encoder with one more downsample than 2.2's: 256px -> 16x16, not 32x32."""
+
+    def __init__(self, base, mults, dim):
+        super().__init__()
+        self.conv_in = nn.Conv2d(3, base, 3, padding=1)
+        blocks, ch = [], base
+        for m in mults:
+            out = base * m
+            blocks += [ResBlock(ch, out), ResBlock(out, out),
+                       nn.Conv2d(out, out, 3, stride=2, padding=1)]
+            ch = out
+        self.blocks = nn.Sequential(*blocks)
+        self.mid = nn.Sequential(ResBlock(ch, ch), AttnBlock(ch), ResBlock(ch, ch))
+        self.norm = nn.GroupNorm(8, ch)
+        self.out = nn.Conv2d(ch, dim, 1)
+
+    def forward(self, x):
+        h = self.mid(self.blocks(self.conv_in(x)))
+        return self.out(F.silu(self.norm(h)))
+
+
+class _Up(nn.Module):
+    def __init__(self, base, mults, dim):
+        super().__init__()
+        ch = base * mults[-1]
+        self.conv_in = nn.Conv2d(dim, ch, 3, padding=1)
+        self.mid = nn.Sequential(ResBlock(ch, ch), AttnBlock(ch), ResBlock(ch, ch))
+        blocks = []
+        for m in reversed(mults):
+            out = base * m
+            blocks += [ResBlock(ch, out), ResBlock(out, out),
+                       nn.Upsample(scale_factor=2, mode="nearest"),
+                       nn.Conv2d(out, out, 3, padding=1)]
+            ch = out
+        self.blocks = nn.Sequential(*blocks)
+        self.norm = nn.GroupNorm(8, ch)
+        self.out = nn.Conv2d(ch, 3, 3, padding=1)
+
+    def forward(self, z):
+        return self.out(F.silu(self.norm(self.blocks(self.mid(self.conv_in(z))))))
+
+
+class VQVAE(nn.Module):
+    """256x256x3 <-> 16x16 integer tokens."""
+
+    def __init__(self, base=64, mults=(1, 2, 4, 4), dim=256, n_codes=8192):
+        super().__init__()
+        self.encoder = _Down(base, mults, dim)
+        self.quant = VectorQuantizer(n_codes, dim)
+        self.decoder = _Up(base, mults, dim)
+        self.arch = dict(base=base, mults=tuple(mults), dim=dim, n_codes=n_codes)
+
+    def encode(self, x):
+        _, _, idx = self.quant(self.encoder(x))
+        return idx
+
+    def decode(self, idx):
+        return self.decoder(self.quant.lookup(idx))
+
+    def forward(self, x):
+        z = self.encoder(x)
+        q, commit, idx = self.quant(z)
+        return self.decoder(q), commit, idx
