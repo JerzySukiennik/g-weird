@@ -115,14 +115,22 @@ class VectorQuantizer(nn.Module):
         q = self.embed[idx].view(b, h, w, c).permute(0, 3, 1, 2)
 
         if self.training:
-            flat32 = flat.to(self.embed.dtype)
-            onehot = F.one_hot(idx, self.n_codes).type(flat32.dtype)
-            self.cluster_size.mul_(self.decay).add_(onehot.sum(0), alpha=1 - self.decay)
-            self.embed_avg.mul_(self.decay).add_(onehot.t() @ flat32, alpha=1 - self.decay)
-            n = self.cluster_size.sum()
-            cluster = (self.cluster_size + self.eps) / (n + self.n_codes * self.eps) * n
-            self.embed.copy_(self.embed_avg / cluster.unsqueeze(1))
-            self._restart_dead(flat32.detach())
+            # Under no_grad because these buffers are statistics, not parameters:
+            # autograd has no business tracking them, and without this the
+            # in-place update trips "a view is being modified inplace" as soon as
+            # anything upstream broadcasts them.
+            with torch.no_grad():
+                flat32 = flat.detach().to(self.embed.dtype)
+                onehot = F.one_hot(idx, self.n_codes).type(flat32.dtype)
+                self.cluster_size.mul_(self.decay).add_(onehot.sum(0),
+                                                        alpha=1 - self.decay)
+                self.embed_avg.mul_(self.decay).add_(onehot.t() @ flat32,
+                                                     alpha=1 - self.decay)
+                n = self.cluster_size.sum()
+                cluster = ((self.cluster_size + self.eps)
+                           / (n + self.n_codes * self.eps) * n)
+                self.embed.copy_(self.embed_avg / cluster.unsqueeze(1))
+                self._restart_dead(flat32)
 
         # Commitment only: the codebook itself moves by EMA, so the encoder is
         # the only thing this gradient should be pulling on.

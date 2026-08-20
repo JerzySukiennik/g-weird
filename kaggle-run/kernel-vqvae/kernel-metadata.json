@@ -10,6 +10,13 @@
   "machine_shape": "NvidiaTeslaT4",
   "dataset_sources": [],
   "competition_sources": [],
-  "kernel_sources": ["jerzysukiennik/gweird-prep-0", "jerzysukiennik/gweird-prep-1"],
+  "kernel_sources": [
+    "jerzysukiennik/gweird-prep-0",
+    "jerzysukiennik/gweird-prep-1",
+    "jerzysukiennik/gweird-prep-2",
+    "jerzysukiennik/gweird-prep-3",
+    "jerzysukiennik/gweird-prep-4",
+    "jerzysukiennik/gweird-prep-5"
+  ],
   "model_sources": []
 }

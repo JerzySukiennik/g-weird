@@ -130,9 +130,16 @@ def main():
     print(f"VQ-VAE: {sum(q.numel() for q in model.parameters())/1e6:.1f}M parametrow, "
           f"codebook {a.n_codes}", flush=True)
     raw = model
+    # Deliberately single-GPU. DataParallel broadcasts module buffers to each
+    # replica as views, so the quantizer's in-place EMA update raises — and had
+    # it not raised, the update would have happened on the replica and been
+    # thrown away at the end of the step, leaving the codebook frozen at its
+    # initialisation with nothing in the loss to show for it. A silent
+    # correctness bug is worse than a crash, and this model's whole point is a
+    # codebook that moves.
     if dev == "cuda" and torch.cuda.device_count() > 1:
-        model = torch.nn.DataParallel(model)
-        print(f"DataParallel na {torch.cuda.device_count()} GPU", flush=True)
+        print(f"{torch.cuda.device_count()} GPU widoczne, uzywam jednej: "
+              f"EMA codebooka nie przezywa DataParallel", flush=True)
 
     opt = torch.optim.AdamW(raw.parameters(), lr=a.lr, betas=(0.9, 0.95),
                             weight_decay=0.01)
