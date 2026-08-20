@@ -48,10 +48,22 @@ class VectorQuantizer(nn.Module):
     """
 
     def __init__(self, n_codes=8192, dim=256, decay=0.99, eps=1e-5,
-                 restart_below=1.0):
+                 restart_below=1.0, restart_every=100):
         super().__init__()
         self.n_codes, self.dim, self.decay, self.eps = n_codes, dim, decay, eps
+        # Restarting EVERY step looked reasonable and was measurably wrong.
+        # cluster_size decays 1% per step, so an entry reseeded to 1.0 falls to
+        # 0.99 on the very next step, trips the threshold again, and is reseeded
+        # before it ever had a chance to be selected. After 20000 steps the
+        # checkpoint showed 5670 of 8192 entries sitting at exactly 1.0 — the
+        # value _restart_dead writes — i.e. churning, never used. Effective
+        # vocabulary was 2522, not 8192, and reconstructions were correspondingly
+        # smeared.
+        # Every N steps instead gives a reseeded entry N chances to win a vector
+        # and start accumulating real usage.
         self.restart_below = restart_below
+        self.restart_every = restart_every
+        self.register_buffer("steps", torch.zeros(1))
         embed = torch.randn(n_codes, dim)
         self.register_buffer("embed", embed)
         self.register_buffer("cluster_size", torch.zeros(n_codes))
@@ -130,7 +142,9 @@ class VectorQuantizer(nn.Module):
                 cluster = ((self.cluster_size + self.eps)
                            / (n + self.n_codes * self.eps) * n)
                 self.embed.copy_(self.embed_avg / cluster.unsqueeze(1))
-                self._restart_dead(flat32)
+                self.steps += 1
+                if int(self.steps) % self.restart_every == 0:
+                    self._restart_dead(flat32)
 
         # Commitment only: the codebook itself moves by EMA, so the encoder is
         # the only thing this gradient should be pulling on.

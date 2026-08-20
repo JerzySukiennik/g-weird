@@ -5,3 +5,5 @@ __pycache__/
 kaggle-run/.kaggle/
 *.bin
 *.jpgbin
+*.pt
+out/

@@ -149,7 +149,13 @@ def main():
     ckpt_path = os.path.join(a.out, "vqvae.pt")
     if a.resume and os.path.exists(ckpt_path):
         ck = torch.load(ckpt_path, map_location="cpu", weights_only=False)
-        raw.load_state_dict(ck["model"])
+        # Tolerant, because the quantizer gained a step counter after the first
+        # session and a strict load would refuse a checkpoint that is otherwise
+        # perfectly good. Missing keys are reported rather than swallowed.
+        missing, unexpected = raw.load_state_dict(ck["model"], strict=False)
+        if missing or unexpected:
+            print(f"wczytane z roznicami — brakujace: {list(missing)}, "
+                  f"nieoczekiwane: {list(unexpected)}", flush=True)
         if "opt" in ck:
             opt.load_state_dict(ck["opt"])
         else:

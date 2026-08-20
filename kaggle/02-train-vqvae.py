@@ -14,8 +14,15 @@ REPO = "https://github.com/JerzySukiennik/g-weird.git"
 WORK = "/kaggle/working"
 OUT = f"{WORK}/run"
 
-TOTAL_STEPS = 30000
-SESSION_STEPS = 20000
+# Raised after looking at the step-20000 reconstructions: compositions and
+# colours survived, all fine detail did not. That matters more than it sounds,
+# because reconstruction quality is the CEILING for the whole model — the
+# transformer adds its own error on top, so whatever the decoder cannot express
+# from 256 tokens, no amount of good token prediction will recover. The
+# weirdness should come from the generator getting content wrong, not from the
+# compressor blurring everything uniformly.
+TOTAL_STEPS = 45000
+SESSION_STEPS = 25000
 BATCH = 16
 
 subprocess.run(["git", "clone", "--depth", "1", REPO, f"{WORK}/g-weird"], check=True)

@@ -16,7 +16,8 @@
     "jerzysukiennik/gweird-prep-2",
     "jerzysukiennik/gweird-prep-3",
     "jerzysukiennik/gweird-prep-4",
-    "jerzysukiennik/gweird-prep-5"
+    "jerzysukiennik/gweird-prep-5",
+    "jerzysukiennik/gweird-vqvae"
   ],
   "model_sources": []
 }
