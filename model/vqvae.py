@@ -67,6 +67,11 @@ class VectorQuantizer(nn.Module):
         again. Measured on the first smoke test — codes 1/256 after 30 steps.
         Seeding from the first real batch puts the entries where the data is.
         """
+        # Under autocast `flat` arrives as fp16 while the buffers are fp32, and an
+        # indexed assignment will not convert — it raises. The CPU smoke test never
+        # saw this because AMP is off there, which is exactly the gap that let it
+        # reach Kaggle and die 36 seconds in.
+        flat = flat.to(self.embed.dtype)
         n = flat.shape[0]
         idx = torch.randint(0, n, (self.n_codes,), device=flat.device)
         pick = flat[idx]
@@ -85,6 +90,7 @@ class VectorQuantizer(nn.Module):
         codebook that decays to a few dozen live entries produces uniform mush —
         and the reconstruction loss keeps falling the whole time, so the curve
         will not tell you."""
+        flat = flat.to(self.embed.dtype)
         dead = self.cluster_size < self.restart_below
         k = int(dead.sum())
         if k == 0:
@@ -109,13 +115,14 @@ class VectorQuantizer(nn.Module):
         q = self.embed[idx].view(b, h, w, c).permute(0, 3, 1, 2)
 
         if self.training:
-            onehot = F.one_hot(idx, self.n_codes).type(flat.dtype)
+            flat32 = flat.to(self.embed.dtype)
+            onehot = F.one_hot(idx, self.n_codes).type(flat32.dtype)
             self.cluster_size.mul_(self.decay).add_(onehot.sum(0), alpha=1 - self.decay)
-            self.embed_avg.mul_(self.decay).add_(onehot.t() @ flat, alpha=1 - self.decay)
+            self.embed_avg.mul_(self.decay).add_(onehot.t() @ flat32, alpha=1 - self.decay)
             n = self.cluster_size.sum()
             cluster = (self.cluster_size + self.eps) / (n + self.n_codes * self.eps) * n
             self.embed.copy_(self.embed_avg / cluster.unsqueeze(1))
-            self._restart_dead(flat.detach())
+            self._restart_dead(flat32.detach())
 
         # Commitment only: the codebook itself moves by EMA, so the encoder is
         # the only thing this gradient should be pulling on.
