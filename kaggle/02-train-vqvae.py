@@ -21,8 +21,12 @@ OUT = f"{WORK}/run"
 # from 256 tokens, no amount of good token prediction will recover. The
 # weirdness should come from the generator getting content wrong, not from the
 # compressor blurring everything uniformly.
-TOTAL_STEPS = 45000
-SESSION_STEPS = 25000
+TOTAL_STEPS = 70000
+# Short session on purpose: the discriminator adds a forward and a backward of a
+# 2.8M net plus two more discriminator passes, so s/step is no longer the 0.70
+# measured without it, and most of this week's quota is already spent. Better a
+# session that ends cleanly than one killed at 90%.
+SESSION_STEPS = 8000
 BATCH = 16
 
 subprocess.run(["git", "clone", "--depth", "1", REPO, f"{WORK}/g-weird"], check=True)

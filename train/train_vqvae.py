@@ -32,6 +32,8 @@ from torch.utils.data import Dataset, DataLoader
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from model.vqvae import VQVAE  # noqa: E402
+from model.discriminator import (PatchDiscriminator, hinge_d_loss,  # noqa: E402
+                                 g_adv_loss, adaptive_weight)
 
 
 class Images(Dataset):
@@ -109,6 +111,11 @@ def main():
     p.add_argument("--lr", type=float, default=2e-4)
     p.add_argument("--warmup", type=int, default=500)
     p.add_argument("--commit", type=float, default=0.25)
+    p.add_argument("--disc-start", type=int, default=0,
+                   help="krok, od ktorego dziala dyskryminator; 0 = od razu")
+    p.add_argument("--disc-lr", type=float, default=2e-4)
+    p.add_argument("--restart-below", type=float, default=0.1,
+                   help="prog przesiewania; 1.0 wybijalo kody uzywane rzadziej niz srednia")
     p.add_argument("--n-codes", type=int, default=8192)
     p.add_argument("--workers", type=int, default=2,
                    help="0 na macOS: forkowane workery potrafia zawisnac")
@@ -127,6 +134,7 @@ def main():
                     persistent_workers=(a.workers > 0))
 
     model = VQVAE(n_codes=a.n_codes).to(dev)
+    model.quant.restart_below = a.restart_below
     print(f"VQ-VAE: {sum(q.numel() for q in model.parameters())/1e6:.1f}M parametrow, "
           f"codebook {a.n_codes}", flush=True)
     raw = model
@@ -145,6 +153,14 @@ def main():
                             weight_decay=0.01)
     scaler = torch.cuda.amp.GradScaler(enabled=(dev == "cuda"))
 
+    disc = PatchDiscriminator().to(dev)
+    # betas (0.5, 0.9) rather than AdamW's usual: the standard GAN setting,
+    # because a discriminator that remembers too much momentum overshoots and
+    # drags the generator into oscillation.
+    opt_d = torch.optim.Adam(disc.parameters(), lr=a.disc_lr, betas=(0.5, 0.9))
+    print(f"dyskryminator: {sum(q.numel() for q in disc.parameters())/1e6:.1f}M, "
+          f"start od kroku {a.disc_start}", flush=True)
+
     step = 0
     ckpt_path = os.path.join(a.out, "vqvae.pt")
     if a.resume and os.path.exists(ckpt_path):
@@ -161,6 +177,11 @@ def main():
         else:
             print("brak stanu optymalizatora — AdamW startuje w spoczynku", flush=True)
         step = ck["step"]
+        if "disc" in ck:
+            disc.load_state_dict(ck["disc"])
+            opt_d.load_state_dict(ck["opt_d"])
+        else:
+            print("checkpoint sprzed dyskryminatora — startuje od zera", flush=True)
         print(f"wznowione z kroku {step}", flush=True)
 
     ceiling = min(a.steps, step + a.max_steps) if a.max_steps else a.steps
@@ -179,27 +200,45 @@ def main():
         for g in opt.param_groups:
             g["lr"] = lr_at(step, a.steps, a.lr, a.warmup)
 
+        # Generator. The adversarial term runs in fp32: the adaptive weight is a
+        # ratio of gradient norms, and fp16 loses the small one to underflow.
         with torch.cuda.amp.autocast(enabled=(dev == "cuda")):
             out, commit, idx = model(x)
-            rec = F.l1_loss(out.float(), x)
-            loss = rec + a.commit * commit.float().mean()
+        out = out.float()
+        rec = F.l1_loss(out, x)
+        adv = torch.zeros((), device=dev)
+        w = torch.zeros((), device=dev)
+        if step >= a.disc_start:
+            adv = g_adv_loss(disc(out))
+            last = raw.decoder.out.weight
+            w = adaptive_weight(rec, adv, last)
+        loss = rec + a.commit * commit.float().mean() + w * adv
 
         opt.zero_grad(set_to_none=True)
-        scaler.scale(loss).backward()
-        scaler.unscale_(opt)
+        loss.backward()
         torch.nn.utils.clip_grad_norm_(raw.parameters(), 1.0)
-        scaler.step(opt)
-        scaler.update()
+        opt.step()
+
+        # Discriminator, on the detached reconstruction so its gradient never
+        # reaches the generator.
+        d_loss = torch.zeros((), device=dev)
+        if step >= a.disc_start:
+            d_loss = hinge_d_loss(disc(x), disc(out.detach()))
+            opt_d.zero_grad(set_to_none=True)
+            d_loss.backward()
+            opt_d.step()
         step += 1
 
         if step % a.log_every == 0:
             live = int(idx.unique().numel())
             print(f"step {step}/{ceiling}  rec {rec.item():.4f}  "
                   f"commit {commit.float().mean().item():.4f}  "
+                  f"adv {adv.item():.3f}  d {d_loss.item():.3f}  w {float(w):.2f}  "
                   f"codes {live}/{a.n_codes}  {time.time()-t0:.0f}s", flush=True)
 
         if step % a.ckpt_every == 0 or step == ceiling:
             blob = {"model": raw.state_dict(), "opt": opt.state_dict(),
+                    "disc": disc.state_dict(), "opt_d": opt_d.state_dict(),
                     "step": step, "arch": raw.arch}
             tmp = ckpt_path + ".tmp"
             torch.save(blob, tmp, _use_new_zipfile_serialization=False)
