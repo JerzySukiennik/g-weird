@@ -16,38 +16,48 @@ can memory-map it.
 """
 
 import argparse
+import io
 import json
 import os
 import sys
+from concurrent.futures import ThreadPoolExecutor
 
 import numpy as np
 import torch
+from PIL import Image
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from model.vqvae import VQVAE  # noqa: E402
 
 
 def shard_reader(prefix, res):
+    """Random-access reader for one shard, in whichever format it was written."""
     meta = json.load(open(f"{prefix}_meta.json"))
     n = meta["n"]
     if meta.get("format") == "jpeg":
         offs = json.load(open(f"{prefix}_offsets.json"))
         fh = open(f"{prefix}_images.jpgbin", "rb")
-        from PIL import Image
-        import io
 
-        def get(i):
+        def raw(i):
+            # Seek+read under no concurrency; only the DECODE is threaded, since
+            # a single file handle cannot be shared across threads safely.
             fh.seek(offs[i])
-            return np.asarray(Image.open(io.BytesIO(fh.read(offs[i + 1] - offs[i])))
-                              .convert("RGB"))
+            return fh.read(offs[i + 1] - offs[i])
+
+        def decode(buf):
+            return np.asarray(Image.open(io.BytesIO(buf)).convert("RGB"))
     else:
         arr = np.memmap(f"{prefix}_images.bin", dtype=np.uint8, mode="r",
                         shape=(n, res, res, 3))
 
-        def get(i):
+        def raw(i):
+            return i
+
+        def decode(i):
             return np.array(arr[i])
+
     caps = json.load(open(f"{prefix}_captions.json"))
-    return n, get, caps
+    return n, raw, decode, caps
 
 
 def main():
@@ -57,6 +67,8 @@ def main():
     p.add_argument("--out-prefix", default="./tokens")
     p.add_argument("--res", type=int, default=256)
     p.add_argument("--batch", type=int, default=64)
+    p.add_argument("--workers", type=int, default=16,
+                   help="watki dekodujace JPEG; bez nich karta czeka na procesor")
     a = p.parse_args()
 
     dev = "cuda" if torch.cuda.is_available() else "cpu"
@@ -77,12 +89,20 @@ def main():
     fh = open(tok_path, "wb")
     captions, total = [], 0
 
+    # Decoding is what starves the GPU here. The first run managed 50 images a
+    # second on a card that should do 300-500 — eight times below its ceiling,
+    # with the encoder idle while one thread unpacked JPEGs. 9.8 h of GPU quota
+    # for work a thread pool does in a fraction of that. The prep script already
+    # used 64 threads for exactly this reason; not carrying that over was an
+    # oversight that cost 2.5 h before it was caught.
+    pool = ThreadPoolExecutor(max_workers=a.workers)
     for prefix in a.data:
-        n, get, caps = shard_reader(prefix, a.res)
+        n, raw, decode, caps = shard_reader(prefix, a.res)
         print(f"{prefix}: {n} obrazow", flush=True)
         for start in range(0, n, a.batch):
             end = min(start + a.batch, n)
-            batch = np.stack([get(i) for i in range(start, end)])
+            bufs = [raw(i) for i in range(start, end)]
+            batch = np.stack(list(pool.map(decode, bufs)))
             x = torch.from_numpy(batch).permute(0, 3, 1, 2).float().to(dev)
             x = x / 127.5 - 1.0
             with torch.no_grad():
@@ -92,6 +112,7 @@ def main():
             total += end - start
             if total % 20000 < a.batch:
                 print(f"  {total} obrazow zakodowanych", flush=True)
+    pool.shutdown()
     fh.close()
 
     with open(f"{a.out_prefix}_captions.json", "w") as f:
