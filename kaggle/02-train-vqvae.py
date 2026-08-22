@@ -26,7 +26,7 @@ TOTAL_STEPS = 70000
 # 2.8M net plus two more discriminator passes, so s/step is no longer the 0.70
 # measured without it, and most of this week's quota is already spent. Better a
 # session that ends cleanly than one killed at 90%.
-SESSION_STEPS = 8000
+SESSION_STEPS = 10000
 BATCH = 16
 
 subprocess.run(["git", "clone", "--depth", "1", REPO, f"{WORK}/g-weird"], check=True)

@@ -117,6 +117,8 @@ def main():
                    help="nizszy niz generatora: D uczy sie znacznie latwiej")
     p.add_argument("--disc-every", type=int, default=2,
                    help="krok D co N krokow G — dodatkowy handicap")
+    p.add_argument("--adv-max", type=float, default=0.1,
+                   help="sufit wagi adwersarialnej; bez niego siegala 0,61")
     p.add_argument("--restart-below", type=float, default=0.1,
                    help="prog przesiewania; 1.0 wybijalo kody uzywane rzadziej niz srednia")
     p.add_argument("--n-codes", type=int, default=8192)
@@ -215,7 +217,15 @@ def main():
         if step >= a.disc_start:
             adv = g_adv_loss(disc(out))
             last = raw.decoder.out.weight
-            w = adaptive_weight(rec, adv, last)
+            # Capped, because without a perceptual loss L1 is the ONLY thing
+            # holding content together — and a pretrained perceptual network is
+            # exactly what this project will not import. Left uncapped the
+            # adaptive weight reached 0.61, and the reconstructions gained
+            # texture while losing colour fidelity and recognisable subjects: at
+            # step 53000 sharpness rose from 0.050 to 0.113 (real images: 0.216)
+            # but everything acquired a green cast and the people vanished.
+            # The discriminator should sharpen what L1 decides, not outvote it.
+            w = adaptive_weight(rec, adv, last).clamp(max=a.adv_max)
         loss = rec + a.commit * commit.float().mean() + w * adv
 
         # scaler.scale(...), not a plain backward. Rewriting this step for the
