@@ -43,12 +43,28 @@ os.chdir(f"{WORK}/g-weird")
 os.makedirs(TMP, exist_ok=True)
 
 
-def grab(key, dest):
+def grab(key, dest, tries=8):
+    """Download with resume. The first attempt at the 8 GB shard died on
+    `curl: (92) HTTP/2 stream not closed cleanly` after several minutes, and
+    --retry did not save it: that flag covers failures establishing the transfer,
+    not one that breaks mid-stream, and without --continue-at a retry would
+    restart from byte zero anyway. So: HTTP/1.1, which is what avoids the stream
+    error on kaggleusercontent, plus range resume, plus a stall detector."""
     if key not in URLS:
         raise SystemExit(f"brak linku dla {key}")
-    subprocess.run(["curl", "-sSL", "--retry", "3", "-o", dest, URLS[key]], check=True)
-    mb = os.path.getsize(dest) / 1e6
-    print(f"  {key}: {mb:.1f} MB", flush=True)
+    for attempt in range(1, tries + 1):
+        r = subprocess.run(["curl", "-sSL", "--http1.1", "--continue-at", "-",
+                            "--retry", "5", "--retry-all-errors", "--retry-delay", "5",
+                            "--speed-limit", "10000", "--speed-time", "60",
+                            "-o", dest, URLS[key]])
+        if r.returncode == 0:
+            break
+        have = os.path.getsize(dest) / 1e6 if os.path.exists(dest) else 0
+        print(f"  {key}: proba {attempt}/{tries} przerwana (curl {r.returncode}), "
+              f"mam {have:.0f} MB, wznawiam", flush=True)
+    else:
+        raise SystemExit(f"{key}: nie udalo sie pobrac w {tries} probach")
+    print(f"  {key}: {os.path.getsize(dest)/1e6:.1f} MB", flush=True)
     return dest
 
 
