@@ -113,7 +113,10 @@ def main():
     p.add_argument("--commit", type=float, default=0.25)
     p.add_argument("--disc-start", type=int, default=0,
                    help="krok, od ktorego dziala dyskryminator; 0 = od razu")
-    p.add_argument("--disc-lr", type=float, default=2e-4)
+    p.add_argument("--disc-lr", type=float, default=5e-5,
+                   help="nizszy niz generatora: D uczy sie znacznie latwiej")
+    p.add_argument("--disc-every", type=int, default=2,
+                   help="krok D co N krokow G — dodatkowy handicap")
     p.add_argument("--restart-below", type=float, default=0.1,
                    help="prog przesiewania; 1.0 wybijalo kody uzywane rzadziej niz srednia")
     p.add_argument("--n-codes", type=int, default=8192)
@@ -152,6 +155,7 @@ def main():
     opt = torch.optim.AdamW(raw.parameters(), lr=a.lr, betas=(0.9, 0.95),
                             weight_decay=0.01)
     scaler = torch.cuda.amp.GradScaler(enabled=(dev == "cuda"))
+    scaler_d = torch.cuda.amp.GradScaler(enabled=(dev == "cuda"))
 
     disc = PatchDiscriminator().to(dev)
     # betas (0.5, 0.9) rather than AdamW's usual: the standard GAN setting,
@@ -214,19 +218,30 @@ def main():
             w = adaptive_weight(rec, adv, last)
         loss = rec + a.commit * commit.float().mean() + w * adv
 
+        # scaler.scale(...), not a plain backward. Rewriting this step for the
+        # discriminator dropped the scaler while leaving autocast on, so fp16
+        # gradients underflowed to zero: reconstruction error went from 0.087 to
+        # 0.51 over 8000 steps and commit fell to 0.0001. The discriminator
+        # reaching a loss of exactly 0.000 was a symptom, not the cause — a
+        # generator emitting noise is trivially separable.
         opt.zero_grad(set_to_none=True)
-        loss.backward()
+        scaler.scale(loss).backward()
+        scaler.unscale_(opt)
         torch.nn.utils.clip_grad_norm_(raw.parameters(), 1.0)
-        opt.step()
+        scaler.step(opt)
+        scaler.update()
 
         # Discriminator, on the detached reconstruction so its gradient never
-        # reaches the generator.
+        # reaches the generator. Its own scaler, because two optimizers must not
+        # share one: unscale_ is per-optimizer state.
         d_loss = torch.zeros((), device=dev)
-        if step >= a.disc_start:
-            d_loss = hinge_d_loss(disc(x), disc(out.detach()))
+        if step >= a.disc_start and step % a.disc_every == 0:
+            with torch.cuda.amp.autocast(enabled=(dev == "cuda")):
+                d_loss = hinge_d_loss(disc(x), disc(out.detach()))
             opt_d.zero_grad(set_to_none=True)
-            d_loss.backward()
-            opt_d.step()
+            scaler_d.scale(d_loss).backward()
+            scaler_d.step(opt_d)
+            scaler_d.update()
         step += 1
 
         if step % a.log_every == 0:

@@ -8,7 +8,9 @@
   "enable_gpu": true,
   "enable_internet": true,
   "machine_shape": "NvidiaTeslaT4",
-  "dataset_sources": [],
+  "dataset_sources": [
+    "jerzysukiennik/gweird-vqvae-45k"
+  ],
   "competition_sources": [],
   "kernel_sources": [
     "jerzysukiennik/gweird-prep-0",
@@ -16,8 +18,7 @@
     "jerzysukiennik/gweird-prep-2",
     "jerzysukiennik/gweird-prep-3",
     "jerzysukiennik/gweird-prep-4",
-    "jerzysukiennik/gweird-prep-5",
-    "jerzysukiennik/gweird-vqvae"
+    "jerzysukiennik/gweird-prep-5"
   ],
   "model_sources": []
 }
