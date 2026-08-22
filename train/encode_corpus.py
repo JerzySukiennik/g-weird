@@ -69,6 +69,8 @@ def main():
     p.add_argument("--batch", type=int, default=64)
     p.add_argument("--workers", type=int, default=16,
                    help="watki dekodujace JPEG; bez nich karta czeka na procesor")
+    p.add_argument("--skip", type=int, default=0,
+                   help="pomin pierwsze N obrazow (wznowienie po przerwanym biegu)")
     a = p.parse_args()
 
     dev = "cuda" if torch.cuda.is_available() else "cpu"
@@ -98,8 +100,15 @@ def main():
     print(f"siatka {grid}x{grid} = {per_image} tokenow na obraz", flush=True)
 
     tok_path = f"{a.out_prefix}_tokens.u16"
-    fh = open(tok_path, "wb")
-    captions, total = [], 0
+    fh = open(tok_path, "ab" if a.skip else "wb")
+    # Captions stream to disk one per line instead of piling up in a list. The
+    # first attempt held all of them in memory and was SIGKILLed at 1.47M images
+    # after 4.65 h — no traceback, because an OOM kill leaves none. The tokens
+    # survived only because they were being written as they went; the captions,
+    # written at the end, did not exist at all.
+    cap_fh = open(f"{a.out_prefix}_captions.jsonl", "a" if a.skip else "w")
+    total = a.skip
+    seen = 0
 
     # Decoding is what starves the GPU here. The first run managed 50 images a
     # second on a card that should do 300-500 — eight times below its ceiling,
@@ -110,27 +119,49 @@ def main():
     pool = ThreadPoolExecutor(max_workers=a.workers)
     for prefix in a.data:
         n, raw, decode, caps = shard_reader(prefix, a.res)
-        print(f"{prefix}: {n} obrazow", flush=True)
-        for start in range(0, n, a.batch):
+        # Captions are re-emitted even for the skipped range. The tokens for it
+        # already exist in the file being appended to, but the captions do not —
+        # they were lost with the killed process. Re-deriving them costs nothing
+        # (no GPU, they are just strings from the shard) and is what keeps the
+        # two files the same length, which the check at the end enforces.
+        if seen + n <= a.skip:                    # whole shard already encoded
+            for c in caps:
+                cap_fh.write(json.dumps(c, ensure_ascii=False) + "\n")
+            seen += n
+            print(f"{prefix}: pomijam {n} juz zakodowanych "
+                  f"(podpisy odtworzone)", flush=True)
+            continue
+        start0 = max(0, a.skip - seen)
+        if start0:
+            for c in caps[:start0]:
+                cap_fh.write(json.dumps(c, ensure_ascii=False) + "\n")
+            print(f"{prefix}: wznawiam od obrazu {start0}", flush=True)
+        else:
+            print(f"{prefix}: {n} obrazow", flush=True)
+        for start in range(start0, n, a.batch):
             end = min(start + a.batch, n)
             bufs = [raw(i) for i in range(start, end)]
             batch = np.stack(list(pool.map(decode, bufs)))
             x = torch.from_numpy(batch).permute(0, 3, 1, 2).float().to(dev)
             x = x / 127.5 - 1.0
             with torch.no_grad(), torch.cuda.amp.autocast(enabled=use_amp):
-                # forward() returns (recon, commit, idx); encode() alone would
-                # bypass DataParallel's scatter/gather and use one card only.
                 idx = model(x)[2]
             fh.write(idx.to(torch.int32).cpu().numpy().astype(np.uint16).tobytes())
-            captions.extend(caps[start:end])
+            for c in caps[start:end]:
+                cap_fh.write(json.dumps(c, ensure_ascii=False) + "\n")
             total += end - start
             if total % 20000 < a.batch:
+                fh.flush(); cap_fh.flush()
                 print(f"  {total} obrazow zakodowanych", flush=True)
+        seen += n
     pool.shutdown()
     fh.close()
+    cap_fh.close()
 
+    # One JSON array at the end, for consumers that want it in one piece.
+    caps_all = [json.loads(l) for l in open(f"{a.out_prefix}_captions.jsonl")]
     with open(f"{a.out_prefix}_captions.json", "w") as f:
-        json.dump(captions, f, ensure_ascii=False)
+        json.dump(caps_all, f, ensure_ascii=False)
     with open(f"{a.out_prefix}_meta.json", "w") as f:
         json.dump({"n": total, "grid": grid, "per_image": per_image,
                    "n_codes": n_codes, "vqvae_step": ck["step"],
@@ -138,7 +169,10 @@ def main():
 
     size = os.path.getsize(tok_path)
     print(f"gotowe: {total} obrazow, {size/1e9:.2f} GB "
-          f"({size/max(total,1):.0f} B na obraz), podpisow {len(captions)}", flush=True)
+          f"({size/max(total,1):.0f} B na obraz), podpisow {len(caps_all)}", flush=True)
+    if size // 2 // per_image != len(caps_all):
+        raise SystemExit(f"NIEZGODNOSC: {size//2//per_image} obrazow w tokenach "
+                         f"vs {len(caps_all)} podpisow")
 
 
 if __name__ == "__main__":
