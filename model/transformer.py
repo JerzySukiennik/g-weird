@@ -48,11 +48,22 @@ class WeirdConfig:
     n_special: int = 4          # PAD, BOS_TEXT, BOS_IMG, EOS
     text_len: int = 32          # captions truncated to this
     image_len: int = 256        # 16x16 grid
+    # Sized to the data, not to ambition. DALL-E mini ran 400M parameters over
+    # 15M pairs; this corpus is 1.78M, about 12% of that, so a proportionally
+    # smaller model is the better fit — an over-parameterised one on a small
+    # corpus memorises rather than generalises, and generalising is the whole
+    # point when the prompt is "sushi made of leaves".
+    #
+    # 12 layers at 640 rather than 10 at 704 for the same cost: depth helps
+    # compositional structure more than width does, and 640/10 gives a clean
+    # 64-wide head. Measured cost is 0.69x the 768-wide version, ~11 h against
+    # ~16 h — though that figure is scaled from G-Micro's throughput, not from
+    # this model on this card, and wants a probe before it is trusted.
     n_layer: int = 12
-    n_head: int = 12
-    n_kv_head: int = 4          # grouped-query attention
-    n_embd: int = 768
-    ffn_hidden: int = 2048
+    n_head: int = 10
+    n_kv_head: int = 2          # grouped-query attention
+    n_embd: int = 640
+    ffn_hidden: int = 1728
     rope_theta: float = 10000.0
     dropout: float = 0.0
 
