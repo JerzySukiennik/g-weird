@@ -15,6 +15,8 @@ import os
 import subprocess
 import sys
 
+import torch
+
 REPO = "https://github.com/JerzySukiennik/g-weird.git"
 WORK = "/kaggle/working"
 OUT = f"{WORK}/run"
@@ -29,7 +31,6 @@ BATCH, ACCUM = 16, 4
 # says nothing about the cause. A run once landed on a Tesla P100 (sm_60) while
 # this PyTorch build supports sm_70 and up. Checking here turns three wasted
 # minutes and a cryptic traceback into one line.
-import torch
 if torch.cuda.is_available():
     cap = torch.cuda.get_device_capability(0)
     name = torch.cuda.get_device_name(0)
@@ -78,13 +79,27 @@ subprocess.run([sys.executable, "data/text_tokenizer.py",
                 "--captions", f"{prefix}_captions.json",
                 "--vocab", "8192", "--out", tok_path], check=True)
 
+# A later session MUST find its checkpoint. The original code fell back to
+# starting from scratch when the glob came up empty, which would silently throw
+# away a finished 5.52 h session and look, in the logs, exactly like a normal
+# first run. Set REQUIRE_RESUME for every session after the first.
+REQUIRE_RESUME = os.environ.get("GW_REQUIRE_RESUME", "1") == "1"
+
 resume = []
-for c in sorted(glob.glob("/kaggle/input/**/gweird.pt", recursive=True)):
+found = sorted(glob.glob("/kaggle/input/**/gweird.pt", recursive=True))
+if found:
     os.makedirs(OUT, exist_ok=True)
-    subprocess.run(["cp", c, f"{OUT}/gweird.pt"], check=True)
+    subprocess.run(["cp", found[0], f"{OUT}/gweird.pt"], check=True)
     resume = ["--resume"]
-    print(f"wznawiam z {c}", flush=True)
-    break
+    ck_step = torch.load(f"{OUT}/gweird.pt", map_location="cpu",
+                         weights_only=False).get("step", "?")
+    print(f"wznawiam z {found[0]} (krok {ck_step})", flush=True)
+elif REQUIRE_RESUME:
+    raise SystemExit("nie znalazlem gweird.pt w zadnym zrodle — podepnij wyjscie "
+                     "poprzedniej sesji albo ustaw GW_REQUIRE_RESUME=0 dla startu "
+                     "od zera")
+else:
+    print("start od zera", flush=True)
 
 subprocess.run([sys.executable, "train/train_ar.py",
                 "--data", prefix, "--tokenizer", tok_path, "--out", OUT,
