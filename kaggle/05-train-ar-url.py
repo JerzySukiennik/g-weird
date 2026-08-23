@@ -29,6 +29,25 @@ BATCH, ACCUM = 16, 4
 
 URLS = json.loads(os.environ.get("GW_URLS") or "{}")
 
+# Kaggle does not always give the accelerator that was asked for, and an
+# unsupported one fails deep inside the first embedding lookup with
+# "no kernel image is available for execution on the device" — a message that
+# says nothing about the cause. A run once landed on a Tesla P100 (sm_60) while
+# this PyTorch build supports sm_70 and up. Checking here turns three wasted
+# minutes and a cryptic traceback into one line.
+import torch
+if torch.cuda.is_available():
+    cap = torch.cuda.get_device_capability(0)
+    name = torch.cuda.get_device_name(0)
+    print(f"GPU: {name}, compute {cap[0]}.{cap[1]}, sztuk {torch.cuda.device_count()}",
+          flush=True)
+    if cap[0] < 7:
+        raise SystemExit(f"{name} (sm_{cap[0]}{cap[1]}) nie jest wspierana przez ten "
+                         f"PyTorch — ustaw machine_shape na NvidiaTeslaT4 i powtorz")
+else:
+    raise SystemExit("brak GPU — kernel bez akceleratora")
+
+
 subprocess.run(["git", "clone", "--depth", "1", REPO, f"{WORK}/g-weird"], check=True)
 os.chdir(f"{WORK}/g-weird")
 os.makedirs(TMP, exist_ok=True)
