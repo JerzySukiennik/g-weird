@@ -46,14 +46,21 @@ for key, suffix in [("meta", "_meta.json"), ("caps", "_captions.json"),
     grab(key, prefix + suffix)
 
 meta = json.load(open(f"{prefix}_meta.json"))
-n, per = meta["n"], meta["per_image"]
+per = meta["per_image"]
 size = os.path.getsize(f"{prefix}_tokens.u16")
-if size != n * per * 2:
-    raise SystemExit(f"tokeny maja {size} B, meta obiecuje {n*per*2} B — "
-                     f"niepelny plik, nie trenuj na tym")
-caps = json.load(open(f"{prefix}_captions.json"))
-if len(caps) != n:
-    raise SystemExit(f"{len(caps)} podpisow na {n} obrazow — rozjazd par")
+if size % (per * 2):
+    raise SystemExit(f"plik tokenow ma {size} B, nie dzieli sie na obrazy — urwany")
+# n from the file, not from meta: the resumed encode wrote its own session count
+# (400015) into meta for a 1780125-pair corpus, and trusting it would have
+# trained on 22% of the data without a word in the log.
+n = size // (per * 2)
+if n != meta["n"]:
+    print(f"UWAGA: meta mowi {meta['n']:,} par, plik ma {n:,} — ufam plikowi", flush=True)
+n_caps = sum(1 for _ in open(f"{prefix}_captions.jsonl")) \
+    if os.path.exists(f"{prefix}_captions.jsonl") \
+    else len(json.load(open(f"{prefix}_captions.json")))
+if n_caps != n:
+    raise SystemExit(f"{n_caps:,} podpisow na {n:,} obrazow — rozjazd par")
 print(f"korpus: {n:,} par, {per} tokenow na obraz, "
       f"tokenizer z kroku {meta['vqvae_step']}", flush=True)
 del caps
