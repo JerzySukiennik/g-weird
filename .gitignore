@@ -7,3 +7,5 @@ kaggle-run/.kaggle/
 *.jpgbin
 *.pt
 out/
+run/
+out/
