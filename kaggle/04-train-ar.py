@@ -31,7 +31,22 @@ if not metas:
     raise SystemExit("brak tokenow — podepnij wyjscie gweird-encode")
 prefix = metas[0][:-len("_meta.json")]
 meta = json.load(open(metas[0]))
-print(f"korpus: {prefix}\n  {meta['n']:,} par, {meta['per_image']} tokenow na obraz, "
+# The corpus was assembled across two kernel runs after the first was killed at
+# 83%, so "the file exists" is not enough to trust it. A short file trains on a
+# truncated corpus without complaining; a caption list of the wrong length pairs
+# every image after the seam with somebody else's words. Both are invisible in
+# the loss curve, so they are checked here instead.
+n, per = meta["n"], meta["per_image"]
+size = os.path.getsize(f"{prefix}_tokens.u16")
+if size != n * per * 2:
+    raise SystemExit(f"tokeny maja {size} B, meta obiecuje {n*per*2} B — "
+                     f"niepelny korpus, nie trenuj na tym")
+n_caps = sum(1 for _ in open(f"{prefix}_captions.jsonl")) \
+    if os.path.exists(f"{prefix}_captions.jsonl") \
+    else len(json.load(open(f"{prefix}_captions.json")))
+if n_caps != n:
+    raise SystemExit(f"{n_caps} podpisow na {n} obrazow — rozjazd par")
+print(f"korpus: {prefix}\n  {n:,} par, {per} tokenow na obraz, "
       f"tokenizer z kroku {meta['vqvae_step']}", flush=True)
 
 tok_path = f"{WORK}/text.json"
