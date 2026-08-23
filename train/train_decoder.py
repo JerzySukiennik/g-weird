@@ -194,8 +194,13 @@ def main():
         scaler.step(opt)
         scaler.update()
 
+        # Keyed to the step number AFTER the increment below, so that a logged
+        # step is always one the discriminator ran on. Keyed to the pre-increment
+        # value, every logged hundred fell on a skipped step and printed the
+        # freshly zeroed variable — "d 0.000" on every line of a 10000-step run,
+        # which reads as a dead discriminator and hid the real one from view.
         d_loss = torch.zeros(())
-        if step % a.disc_every == 0:
+        if (step + 1) % a.disc_every == 0:
             d_loss = hinge_d_loss(disc(x), disc(out.detach()))
             opt_d.zero_grad(set_to_none=True)
             scaler_d.scale(d_loss).backward()
