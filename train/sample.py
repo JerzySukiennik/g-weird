@@ -102,7 +102,15 @@ def main():
     tok = Tokenizer.from_file(a.tokenizer)
 
     ck = torch.load(a.ckpt, map_location="cpu")
-    cfg = WeirdConfig(**ck["arch"]) if "arch" in ck else WeirdConfig()
+    # train_ar.py stores the config under "cfg" (as cfg.__dict__). Falling back
+    # to a default WeirdConfig would load a checkpoint whose shapes happen to
+    # match into a model with different settings — silently, if the defaults
+    # ever drift from what was trained.
+    saved = ck.get("cfg") or ck.get("arch")
+    if saved is None:
+        raise SystemExit("checkpoint bez konfiguracji — nie zgaduje architektury")
+    cfg = WeirdConfig(**{k: v for k, v in saved.items()
+                         if k in WeirdConfig.__dataclass_fields__})
     model = WeirdGPT(cfg).to(dev).eval()
     model.load_state_dict(ck["model"])
     print(f"transformer z kroku {ck.get('step', '?')}", flush=True)
