@@ -162,17 +162,26 @@ def main():
     caps_all = [json.loads(l) for l in open(f"{a.out_prefix}_captions.jsonl")]
     with open(f"{a.out_prefix}_captions.json", "w") as f:
         json.dump(caps_all, f, ensure_ascii=False)
+
+    size = os.path.getsize(tok_path)
+    n_total = size // 2 // per_image
+    # Checked BEFORE meta is written, so a run that produced mismatched files
+    # cannot also leave behind a meta.json blessing them.
+    if n_total != len(caps_all):
+        raise SystemExit(f"NIEZGODNOSC: {n_total} obrazow w tokenach "
+                         f"vs {len(caps_all)} podpisow")
+
     with open(f"{a.out_prefix}_meta.json", "w") as f:
-        json.dump({"n": total, "grid": grid, "per_image": per_image,
+        # n comes from the file, not from `total`: on a resumed run `total`
+        # counts only this session's images, and a meta that undercounts the
+        # corpus is worse than no meta — it silently shrinks training. The first
+        # resumed run wrote 400015 for a 1780125-pair corpus.
+        json.dump({"n": n_total, "grid": grid, "per_image": per_image,
                    "n_codes": n_codes, "vqvae_step": ck["step"],
                    "arch": ck["arch"]}, f)
 
-    size = os.path.getsize(tok_path)
-    print(f"gotowe: {total} obrazow, {size/1e9:.2f} GB "
-          f"({size/max(total,1):.0f} B na obraz), podpisow {len(caps_all)}", flush=True)
-    if size // 2 // per_image != len(caps_all):
-        raise SystemExit(f"NIEZGODNOSC: {size//2//per_image} obrazow w tokenach "
-                         f"vs {len(caps_all)} podpisow")
+    print(f"gotowe: {n_total} obrazow ({total} w tej sesji), {size/1e9:.2f} GB, "
+          f"podpisow {len(caps_all)}", flush=True)
 
 
 if __name__ == "__main__":

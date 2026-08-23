@@ -33,14 +33,31 @@ from data.text_tokenizer import load as load_tok  # noqa: E402
 class TokenPairs(Dataset):
     def __init__(self, prefix, tok_path, cfg):
         meta = json.load(open(f"{prefix}_meta.json"))
-        self.n = meta["n"]
         self.per = meta["per_image"]
         if self.per != cfg.image_len:
             raise SystemExit(f"korpus ma {self.per} tokenow na obraz, "
                              f"model oczekuje {cfg.image_len}")
+
+        # The count comes from the file, not from meta. When the corpus was
+        # finished in a second kernel run, meta recorded that run's counter
+        # (400015) instead of the whole corpus (1780125) — training would then
+        # have quietly used 22% of the data with nothing in the logs to say so.
+        # The bytes on disk cannot be wrong in that way, so they decide.
+        size = os.path.getsize(f"{prefix}_tokens.u16")
+        if size % (self.per * 2):
+            raise SystemExit(f"plik tokenow ma {size} B, nie dzieli sie na obrazy "
+                             f"po {self.per * 2} B — jest urwany")
+        self.n = size // (self.per * 2)
+        if self.n != meta["n"]:
+            print(f"UWAGA: meta mowi {meta['n']:,} par, plik ma {self.n:,} — "
+                  f"ufam plikowi", flush=True)
+
         self.toks = np.memmap(f"{prefix}_tokens.u16", dtype=np.uint16, mode="r",
                               shape=(self.n, self.per))
         self.caps = json.load(open(f"{prefix}_captions.json"))
+        if len(self.caps) != self.n:
+            raise SystemExit(f"{len(self.caps):,} podpisow na {self.n:,} obrazow — "
+                             f"pary sie rozjechaly, nie trenuj na tym")
         self.tok = load_tok(tok_path)
         self.cfg = cfg
         print(f"{self.n:,} par, {self.per} tokenow na obraz", flush=True)
