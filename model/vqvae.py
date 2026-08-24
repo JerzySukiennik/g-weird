@@ -183,16 +183,39 @@ class _Down(nn.Module):
 
 
 class _Up(nn.Module):
-    def __init__(self, base, mults, dim):
+    """Codes back to pixels.
+
+    `n_res` and `attn_levels` exist because of a measurement, not a preference.
+    A public VQGAN reconstructing the SAME 16x16 grid with a SMALLER codebook
+    (1024 against our 8192) recovered fur and window frames where ours produced
+    smears. Profiling both decoders side by side, the differences were: 42.4M
+    parameters against 10.3M, 17 residual blocks against 10, and — the part that
+    is not just "bigger" — **four attention blocks against one**.
+
+    Ours attends only at the bottleneck. Theirs attends at several resolutions,
+    so it can relate distant parts of the picture while it still has the detail
+    to act on. On a corpus full of repeated texture and lettering that plausibly
+    matters more than width alone, which is why it is adjustable here rather
+    than fixed.
+    """
+
+    def __init__(self, base, mults, dim, n_res=2, attn_levels=0):
         super().__init__()
         ch = base * mults[-1]
         self.conv_in = nn.Conv2d(dim, ch, 3, padding=1)
         self.mid = nn.Sequential(ResBlock(ch, ch), AttnBlock(ch), ResBlock(ch, ch))
         blocks = []
-        for m in reversed(mults):
+        # Levels run coarse to fine, and attention is spent on the coarse ones:
+        # at 16x16 it costs 256 positions, at 256x256 it would cost 65536 and be
+        # quadratic in that.
+        for level, m in enumerate(reversed(mults)):
             out = base * m
-            blocks += [ResBlock(ch, out), ResBlock(out, out),
-                       nn.Upsample(scale_factor=2, mode="nearest"),
+            blocks.append(ResBlock(ch, out))
+            for _ in range(n_res - 1):
+                blocks.append(ResBlock(out, out))
+            if level < attn_levels:
+                blocks.append(AttnBlock(out))
+            blocks += [nn.Upsample(scale_factor=2, mode="nearest"),
                        nn.Conv2d(out, out, 3, padding=1)]
             ch = out
         self.blocks = nn.Sequential(*blocks)
@@ -207,7 +230,7 @@ class VQVAE(nn.Module):
     """256x256x3 <-> 16x16 integer tokens."""
 
     def __init__(self, base=64, mults=(1, 2, 4, 4), dim=256, n_codes=8192,
-                 dec_base=None):
+                 dec_base=None, dec_res=2, dec_attn=0):
         """`dec_base` widens the DECODER alone.
 
         The encoder and the codebook define what a token id means, and the
@@ -227,10 +250,15 @@ class VQVAE(nn.Module):
         dec_base = base if dec_base is None else dec_base
         self.encoder = _Down(base, mults, dim)
         self.quant = VectorQuantizer(n_codes, dim)
-        self.decoder = _Up(dec_base, mults, dim)
+        self.decoder = _Up(dec_base, mults, dim, n_res=dec_res,
+                           attn_levels=dec_attn)
         self.arch = dict(base=base, mults=tuple(mults), dim=dim, n_codes=n_codes)
         if dec_base != base:
             self.arch["dec_base"] = dec_base
+        if dec_res != 2:
+            self.arch["dec_res"] = dec_res
+        if dec_attn:
+            self.arch["dec_attn"] = dec_attn
 
     def encode(self, x):
         _, _, idx = self.quant(self.encoder(x))

@@ -53,7 +53,8 @@ from torch.utils.data import DataLoader
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from model.vqvae import VQVAE                                    # noqa: E402
 from model.discriminator import (PatchDiscriminator, hinge_d_loss,  # noqa: E402
-                                 g_adv_loss, adaptive_weight)
+                                 g_adv_loss, adaptive_weight,
+                                 feature_match_loss)
 from train.train_vqvae import Images, lr_at                      # noqa: E402
 
 
@@ -121,6 +122,13 @@ def main():
                         "straty percepcyjnej ani zamrozonych kodow")
     p.add_argument("--perc", type=float, default=1.0, help="waga straty percepcyjnej")
     p.add_argument("--colour", type=float, default=0.5, help="waga kotwicy kolorow")
+    p.add_argument("--fm", type=float, default=1.0,
+                   help="waga dopasowania cech dyskryminatora; 0 wylacza")
+    p.add_argument("--dec-base", type=int, default=0,
+                   help="szerszy dekoder; 0 = jak w checkpoincie")
+    p.add_argument("--dec-res", type=int, default=2, help="bloki rezydualne na poziom")
+    p.add_argument("--dec-attn", type=int, default=0,
+                   help="na ilu poziomach dodac attention (poza waskim gardlem)")
     p.add_argument("--workers", type=int, default=2)
     p.add_argument("--log-every", type=int, default=50)
     p.add_argument("--ckpt-every", type=int, default=500)
@@ -147,8 +155,28 @@ def main():
                     drop_last=True, pin_memory=(dev == "cuda"), persistent_workers=a.workers > 0)
 
     ck = torch.load(a.vqvae, map_location="cpu", weights_only=False)
-    model = VQVAE(**ck["arch"]).to(dev)
-    model.load_state_dict(ck["model"])
+    arch = dict(ck["arch"])
+    if a.dec_base:
+        arch.update(dec_base=a.dec_base, dec_res=a.dec_res, dec_attn=a.dec_attn)
+    model = VQVAE(**arch).to(dev)
+
+    # A wider decoder has different shapes, so its weights cannot come from the
+    # checkpoint and start fresh. The encoder and codebook MUST come from it:
+    # they define what a token id means, and the transformer was trained against
+    # those meanings. Loading them by name rather than with strict=False, so a
+    # silently missing encoder tensor cannot pass as "just the decoder differs".
+    frozen = {k: v for k, v in ck["model"].items()
+              if k.startswith("encoder.") or k.startswith("quant.")}
+    missing, unexpected = model.load_state_dict(frozen, strict=False)
+    still_needed = [k for k in missing
+                    if k.startswith("encoder.") or k.startswith("quant.")]
+    if still_needed or unexpected:
+        raise SystemExit(f"enkoder/codebook nie wczytal sie w calosci: "
+                         f"brakuje {still_needed[:4]}, nieoczekiwane {unexpected[:4]}")
+    if a.dec_base:
+        n = sum(q.numel() for q in model.decoder.parameters())
+        print(f"dekoder od zera: base {a.dec_base}, res {a.dec_res}, "
+              f"attn {a.dec_attn}, {n/1e6:.1f}M", flush=True)
     base_step = ck.get("step", 0)
     print(f"vqvae z kroku {base_step}, arch {ck['arch']}", flush=True)
 
@@ -225,7 +253,19 @@ def main():
         colour = F.l1_loss(out.mean(dim=(2, 3)), x.mean(dim=(2, 3)))
         content = rec + a.perc * perc + a.colour * colour
 
-        adv = g_adv_loss(disc(out))
+        # One pass with features, reused for both the verdict and the matching
+        # term — running the discriminator twice would double its cost for
+        # numbers we already have.
+        if a.fm > 0:
+            fake_logits, fake_feats = disc(out, features=True)
+            with torch.no_grad():
+                _, real_feats = disc(x, features=True)
+            fm = feature_match_loss(real_feats, fake_feats)
+            content = content + a.fm * fm
+        else:
+            fake_logits = disc(out)
+            fm = torch.zeros((), device=dev)
+        adv = g_adv_loss(fake_logits)
         w = adaptive_weight(content, adv, raw.decoder.out.weight).clamp(max=a.adv_max)
         loss = content + w * adv
 
@@ -254,6 +294,7 @@ def main():
         if step % a.log_every == 0:
             s_out, s_real = sharpness(out), sharpness(x)
             print(f"step {step}/{ceiling}  rec {rec.item():.4f}  perc {perc.item():.4f}  "
+                  f"fm {float(fm):.4f}  "
                   f"col {colour.item():.4f}  adv {adv.item():.3f}  d {d_loss.item():.3f}  "
                   f"w {float(w):.2f}  ostrosc {s_out:.3f}/{s_real:.3f} "
                   f"({100*s_out/max(s_real,1e-6):.0f}%)  {time.time()-t0:.0f}s", flush=True)

@@ -24,6 +24,7 @@ Trained from scratch like everything else in the G family.
 
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 
 
 class PatchDiscriminator(nn.Module):
@@ -48,8 +49,35 @@ class PatchDiscriminator(nn.Module):
         seq += [nn.Conv2d(ch, 1, 4, stride=1, padding=1)]
         self.net = nn.Sequential(*seq)
 
-    def forward(self, x):
-        return self.net(x)
+    def forward(self, x, features=False):
+        """`features=True` also returns the activation after each LeakyReLU.
+
+        Those intermediate maps are what feature matching compares. Asking the
+        discriminator only "real or fake" gives the generator a single scalar to
+        chase, and chasing it is what produced our two failures: at cap 0.5 the
+        decoder found texture that satisfied the verdict while faces melted.
+        Matching what the discriminator SEES on the way to its verdict is a much
+        denser signal, and it cannot be satisfied by inventing plausible grain
+        in the wrong places.
+        """
+        if not features:
+            return self.net(x)
+        feats = []
+        for layer in self.net:
+            x = layer(x)
+            if isinstance(layer, nn.LeakyReLU):
+                feats.append(x)
+        return x, feats
+
+
+def feature_match_loss(real_feats, fake_feats):
+    """Mean L1 between the discriminator's own activations.
+
+    The real side is detached: this is a target for the generator, not another
+    thing for the discriminator to learn.
+    """
+    return sum(F.l1_loss(f, r.detach())
+               for f, r in zip(fake_feats, real_feats)) / max(len(real_feats), 1)
 
 
 def hinge_d_loss(real_logits, fake_logits):
