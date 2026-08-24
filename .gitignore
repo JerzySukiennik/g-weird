@@ -9,3 +9,4 @@ kaggle-run/.kaggle/
 out/
 run/
 out/
+kaggle-run/kernel-jdb-*/
