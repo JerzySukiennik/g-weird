@@ -60,19 +60,35 @@ def main():
     p.add_argument("--max-chars", type=int, default=300)
     a = p.parse_args()
 
-    from huggingface_hub import hf_hub_download
+    import requests
+
+    # Plain streamed GET rather than hf_hub_download. The library keeps every
+    # file in a content-addressed cache and hands back a symlink into it, so
+    # deleting what it returns removes the link and leaves the 500 MB blob —
+    # the cache grew by half a gigabyte per part until the kernel's disk gave
+    # out, which is how the first two runs died without writing a single file.
+    # Streaming to a path we own means the delete actually deletes.
+    URL = ("https://huggingface.co/datasets/poloclub/diffusiondb/"
+           "resolve/main/images/part-{:06d}.zip")
 
     images_path = f"{a.out_prefix}_images.jpgbin"
     fh = open(images_path, "wb")
     captions, offsets, kept, seen = [], [0], 0, 0
 
     for n in range(a.first_part, a.first_part + a.parts):
-        name = f"images/part-{n:06d}.zip"
+        path = f"/tmp/ddb-part-{n:06d}.zip"
         try:
-            path = hf_hub_download("poloclub/diffusiondb", name,
-                                   repo_type="dataset")
+            with requests.get(URL.format(n), stream=True, timeout=60) as r:
+                r.raise_for_status()
+                with open(path, "wb") as out:
+                    for chunk in r.iter_content(1 << 20):
+                        out.write(chunk)
         except Exception as e:
-            print(f"  {name}: pominiete ({type(e).__name__})", flush=True)
+            print(f"  czesc {n}: pominieta ({type(e).__name__}: {e})", flush=True)
+            try:
+                os.remove(path)
+            except OSError:
+                pass
             continue
 
         try:
@@ -111,7 +127,9 @@ def main():
             except OSError:
                 pass
 
-        if (n - a.first_part + 1) % 10 == 0:
+        # Every part, not every tenth: the first attempt left no log at all,
+        # and a failure you cannot locate costs more than a few extra lines.
+        if True:
             fh.flush()
             print(f"  {n - a.first_part + 1} archiwow, {kept} par, "
                   f"{os.path.getsize(images_path)/1e9:.2f} GB", flush=True)
