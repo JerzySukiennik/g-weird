@@ -38,6 +38,10 @@ class DoodleConfig:
     ffn_hidden: int = 1024     # ~8/3 * n_embd, rounded to a multiple of 64
     rope_theta: float = 10000.0
     dropout: float = 0.0
+    # Causal by default, which is what every model in the family has been. A
+    # masked-token model needs every position to see every other one, so it
+    # flips this rather than forking the attention.
+    causal: bool = True
 
 
 class KVCache:
@@ -120,6 +124,7 @@ class CausalSelfAttention(nn.Module):
         self.head_dim = config.n_embd // config.n_head
         self.layer_idx = layer_idx
         self.dropout = config.dropout
+        self.causal = getattr(config, "causal", True)
 
         # Grouped-query attention: full-width queries, narrow keys and values.
         # The browser, not the GPU, is what forces this. onnxruntime-web
@@ -163,7 +168,7 @@ class CausalSelfAttention(nn.Module):
         y = F.scaled_dot_product_attention(
             q, k, v,
             dropout_p=self.dropout if self.training else 0.0,
-            is_causal=(T == T_k and T > 1),
+            is_causal=(self.causal and T == T_k and T > 1),
         )
 
         y = y.transpose(1, 2).contiguous().view(B, T, C)
