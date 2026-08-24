@@ -57,6 +57,40 @@ from model.discriminator import (PatchDiscriminator, hinge_d_loss,  # noqa: E402
 from train.train_vqvae import Images, lr_at                      # noqa: E402
 
 
+class Cropped(torch.utils.data.Dataset):
+    """Random crops that always drop the bottom band and move everything else.
+
+    The corpus is largely watermarked stock photography — Shutterstock,
+    Dreamstime and Alamy marks are plainly visible in the training batches. A
+    discriminator's whole job is to make outputs match that distribution, so the
+    first run at cap 0.5 dutifully learned to render the watermark crisply: white
+    "piano key" blocks turned up in every generation, sharper than the subjects.
+
+    Two defences here. The caption bar lives in the last rows, so crops are taken
+    from above it and it is never seen. The tiled marks cannot be removed that
+    way, but a random offset means they no longer sit at a fixed place, which is
+    what made them easy to memorise.
+
+    Everything downstream is fully convolutional, so training at 224 and running
+    at 256 is fine — the grid is 14x14 here and 16x16 there, and no layer cares.
+    """
+
+    def __init__(self, base, size=224, drop_bottom=16):
+        self.base, self.size, self.drop = base, size, drop_bottom
+
+    def __len__(self):
+        return len(self.base)
+
+    def __getitem__(self, i):
+        x = self.base[i]
+        _, h, w = x.shape
+        top_max = max(0, h - self.drop - self.size)
+        left_max = max(0, w - self.size)
+        top = int(torch.randint(0, top_max + 1, ()))
+        left = int(torch.randint(0, left_max + 1, ()))
+        return x[:, top:top + self.size, left:left + self.size]
+
+
 def sharpness(img):
     """Mean absolute neighbour difference — high for crisp edges, low for mush.
 
@@ -94,6 +128,10 @@ def main():
                    help="zrzut PNG oryginal/rekonstrukcja — liczby dzis kilka razy "
                         "wygladaly dobrze, gdy tresc sie psula")
     p.add_argument("--res", type=int, default=256)
+    p.add_argument("--crop", type=int, default=0,
+                   help="losowy kadr tej wielkosci; 0 = bez kadrowania")
+    p.add_argument("--drop-bottom", type=int, default=16,
+                   help="ile dolnych wierszy nigdy nie trafia do kadru (pasek stempla)")
     p.add_argument("--resume", action="store_true")
     a = p.parse_args()
 
@@ -101,6 +139,10 @@ def main():
     os.makedirs(a.out, exist_ok=True)
 
     ds = Images(a.data, res=a.res)
+    if a.crop:
+        ds = Cropped(ds, size=a.crop, drop_bottom=a.drop_bottom)
+        print(f"kadr {a.crop}px, dolne {a.drop_bottom} wierszy zawsze odciete",
+              flush=True)
     dl = DataLoader(ds, batch_size=a.batch, shuffle=True, num_workers=a.workers,
                     drop_last=True, pin_memory=(dev == "cuda"), persistent_workers=a.workers > 0)
 
