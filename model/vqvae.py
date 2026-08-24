@@ -206,12 +206,31 @@ class _Up(nn.Module):
 class VQVAE(nn.Module):
     """256x256x3 <-> 16x16 integer tokens."""
 
-    def __init__(self, base=64, mults=(1, 2, 4, 4), dim=256, n_codes=8192):
+    def __init__(self, base=64, mults=(1, 2, 4, 4), dim=256, n_codes=8192,
+                 dec_base=None):
+        """`dec_base` widens the DECODER alone.
+
+        The encoder and the codebook define what a token id means, and the
+        transformer is trained against those meanings — so they must not move
+        once it exists. The decoder only renders those ids into pixels, which
+        makes it the one part that can grow freely.
+
+        That matters because capacity is where the measured ceiling is. At the
+        same 16x16 grid and with a SMALLER codebook (1024 against our 8192), a
+        public VQGAN reconstructed fur and window frames where ours produced
+        smears — and the difference between them is width: 72M against 19.5M.
+
+        Defaults to `base`, so every checkpoint written before this argument
+        existed loads unchanged.
+        """
         super().__init__()
+        dec_base = base if dec_base is None else dec_base
         self.encoder = _Down(base, mults, dim)
         self.quant = VectorQuantizer(n_codes, dim)
-        self.decoder = _Up(base, mults, dim)
+        self.decoder = _Up(dec_base, mults, dim)
         self.arch = dict(base=base, mults=tuple(mults), dim=dim, n_codes=n_codes)
+        if dec_base != base:
+            self.arch["dec_base"] = dec_base
 
     def encode(self, x):
         _, _, idx = self.quant(self.encoder(x))
