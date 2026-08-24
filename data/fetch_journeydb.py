@@ -45,15 +45,40 @@ def square_jpeg(data, res, quality=88):
     return buf.getvalue()
 
 
+def download(url, path, token, tries=8):
+    """Download that survives a broken connection by resuming from what it has.
+
+    The first attempt at the 859 MB annotation file died at 593 MB with
+    IncompleteRead and took the whole kernel with it — the same failure already
+    fixed once today for the 8 GB DiffusionDB shards, written fresh here without
+    the protection. A Range request continues from the bytes already on disk
+    instead of starting over.
+    """
+    for attempt in range(1, tries + 1):
+        have = os.path.getsize(path) if os.path.exists(path) else 0
+        headers = {"Authorization": f"Bearer {token}"}
+        if have:
+            headers["Range"] = f"bytes={have}-"
+        try:
+            with requests.get(url, headers=headers, stream=True, timeout=120) as r:
+                if have and r.status_code == 200:
+                    # Server ignored the range; start clean rather than append
+                    # a second copy of the beginning onto the first.
+                    have = 0
+                r.raise_for_status()
+                with open(path, "ab" if have else "wb") as out:
+                    for chunk in r.iter_content(1 << 22):
+                        out.write(chunk)
+            return path
+        except Exception as e:
+            print(f"  proba {attempt}/{tries} przerwana ({type(e).__name__}), "
+                  f"mam {os.path.getsize(path)/1e6:.0f} MB, wznawiam", flush=True)
+    raise SystemExit(f"nie udalo sie pobrac {url}")
+
+
 def load_captions(token, tmp):
     """img_path -> caption, read once from the annotation archive."""
-    path = os.path.join(tmp, "anno.tgz")
-    with requests.get(f"{REPO}/{ANNO}", headers={"Authorization": f"Bearer {token}"},
-                      stream=True, timeout=120) as r:
-        r.raise_for_status()
-        with open(path, "wb") as out:
-            for chunk in r.iter_content(1 << 22):
-                out.write(chunk)
+    path = download(f"{REPO}/{ANNO}", os.path.join(tmp, "anno.tgz"), token)
     print(f"  podpisy: {os.path.getsize(path)/1e6:.0f} MB pobrane", flush=True)
 
     caps = {}
