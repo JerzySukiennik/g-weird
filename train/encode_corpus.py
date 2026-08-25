@@ -106,7 +106,13 @@ def main():
     # after 4.65 h — no traceback, because an OOM kill leaves none. The tokens
     # survived only because they were being written as they went; the captions,
     # written at the end, did not exist at all.
-    cap_fh = open(f"{a.out_prefix}_captions.jsonl", "a" if a.skip else "w")
+    # ALWAYS truncated, even when resuming, because the skipped range is
+    # re-emitted below. Appending instead would have doubled 1.47M captions on
+    # the second resume: the first time this ran, the caption file did not exist
+    # (it was written only at the end and died with the process), so appending
+    # was right then and wrong now. Re-deriving them all costs no GPU and makes
+    # the result independent of whatever a previous run left behind.
+    cap_fh = open(f"{a.out_prefix}_captions.jsonl", "w")
     total = a.skip
     seen = 0
 
@@ -152,7 +158,25 @@ def main():
             total += end - start
             if total % 20000 < a.batch:
                 fh.flush(); cap_fh.flush()
-                print(f"  {total} obrazow zakodowanych", flush=True)
+                # Resident memory in the log, because two runs have now been
+                # killed without a traceback at almost exactly 1.46M images —
+                # different corpora, same point. That reproducibility says
+                # something grows per image, and without a number here every
+                # theory about it stays a theory.
+                rss = 0
+                try:
+                    with open("/proc/self/status") as st:
+                        for line in st:
+                            if line.startswith("VmRSS:"):
+                                rss = int(line.split()[1]) / 1e6
+                                break
+                except OSError:
+                    pass
+                if torch.cuda.is_available():
+                    # Cheap, and if allocator fragmentation is what grows, this
+                    # is what keeps it from growing.
+                    torch.cuda.empty_cache()
+                print(f"  {total} obrazow zakodowanych  RAM {rss:.1f} GB", flush=True)
         seen += n
     pool.shutdown()
     fh.close()
