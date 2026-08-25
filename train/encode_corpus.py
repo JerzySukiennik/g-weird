@@ -66,6 +66,12 @@ def main():
     p.add_argument("--ckpt", required=True)
     p.add_argument("--out-prefix", default="./tokens")
     p.add_argument("--res", type=int, default=256)
+    p.add_argument("--enc-res", type=int, default=0,
+                   help="przeskaluj do tego boku przed enkoderem; 0 = bez zmiany. "
+                        "MUSI odpowiadac --train-res z treningu tokenizera, bo "
+                        "siatka tokenow zalezy od wejscia: 192 daje 24x24=576, "
+                        "256 dalo by 32x32=1024 i model dostalby statystyki, "
+                        "ktorych nigdy nie widzial")
     p.add_argument("--batch", type=int, default=64)
     p.add_argument("--workers", type=int, default=16,
                    help="watki dekodujace JPEG; bez nich karta czeka na procesor")
@@ -93,11 +99,13 @@ def main():
         model = torch.nn.DataParallel(model)
         print(f"DataParallel na {torch.cuda.device_count()} GPU", flush=True)
 
-    grid = a.res // (2 ** len(ck["arch"]["mults"]))
+    enc_res = a.enc_res or a.res
+    grid = enc_res // (2 ** len(ck["arch"]["mults"]))
     per_image = grid * grid
     n_codes = ck["arch"]["n_codes"]
     assert n_codes <= 65535, "uint16 nie pomiesci tego codebooka"
-    print(f"siatka {grid}x{grid} = {per_image} tokenow na obraz", flush=True)
+    print(f"wejscie {enc_res}px, siatka {grid}x{grid} = {per_image} tokenow "
+          f"na obraz", flush=True)
 
     tok_path = f"{a.out_prefix}_tokens.u16"
     fh = open(tok_path, "ab" if a.skip else "wb")
@@ -150,6 +158,13 @@ def main():
             batch = np.stack(list(pool.map(decode, bufs)))
             x = torch.from_numpy(batch).permute(0, 3, 1, 2).float().to(dev)
             x = x / 127.5 - 1.0
+            if enc_res != a.res:
+                # Ta sama kolejnosc co w treningu: najpierw normalizacja, potem
+                # skalowanie (train_vqvae.Scaled opakowuje juz znormalizowany
+                # tensor). Odwrotna kolejnosc dawalaby inne piksele na krawedziach.
+                x = torch.nn.functional.interpolate(
+                    x, size=(enc_res, enc_res), mode="bilinear",
+                    align_corners=False, antialias=True)
             with torch.no_grad(), torch.cuda.amp.autocast(enabled=use_amp):
                 idx = model(x)[2]
             fh.write(idx.to(torch.int32).cpu().numpy().astype(np.uint16).tobytes())
