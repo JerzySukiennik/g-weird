@@ -41,14 +41,15 @@ if cap[0] < 7:
 subprocess.run(["git", "clone", "--depth", "1", REPO, f"{WORK}/g-weird"], check=True)
 os.chdir(f"{WORK}/g-weird")
 
-# Kolejnosc z SHARDS, nie z glob: podpisy i tokeny musza isc w tej samej
-# kolejnosci, a glob sortuje alfabetycznie i cicho by ja przestawil.
-prefixes = []
-for s in SHARDS:
-    hits = glob.glob(f"/kaggle/input/{s}/**/gweird_meta.json", recursive=True)
-    if len(hits) != 1:
-        raise SystemExit(f"{s}: znalazlem {len(hits)} meta.json, oczekiwalem jednego")
-    prefixes.append(hits[0][: -len("_meta.json")])
+# Kazdy kernel podpina TYLKO swoje piec shardow, wiec bierze wszystko, co widzi,
+# zamiast dopasowywac sciezki po nazwie. Pierwsza proba zakladala, ze wyjscie
+# kernela montuje sie pod /kaggle/input/<slug>/ — nie montuje sie, i oba kernele
+# padly na "znalazlem 0 meta.json". Posortowana lista daje powtarzalna kolejnosc,
+# a to jedyne, czego wymagaja tokeny i podpisy.
+metas = sorted(glob.glob("/kaggle/input/**/gweird_meta.json", recursive=True))
+if len(metas) != len(SHARDS):
+    raise SystemExit(f"widze {len(metas)} shardow, oczekiwalem {len(SHARDS)}: {metas}")
+prefixes = [m[: -len("_meta.json")] for m in metas]
 total = sum(json.load(open(f"{p}_meta.json"))["n"] for p in prefixes)
 print(f"{len(prefixes)} shardow, {total:,} par do zakodowania", flush=True)
 
