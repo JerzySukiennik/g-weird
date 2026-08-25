@@ -33,7 +33,24 @@ from torch.utils.data import Dataset, DataLoader
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from model.vqvae import VQVAE  # noqa: E402
 from model.discriminator import (PatchDiscriminator, hinge_d_loss,  # noqa: E402
+                                 feature_match_loss,
                                  g_adv_loss, adaptive_weight)
+
+
+class Scaled(Dataset):
+    """Resize on the way out, so one set of shards serves any training size."""
+
+    def __init__(self, base, size):
+        self.base, self.size = base, size
+
+    def __len__(self):
+        return len(self.base)
+
+    def __getitem__(self, i):
+        x = self.base[i]
+        return F.interpolate(x[None], size=(self.size, self.size),
+                             mode="bilinear", align_corners=False,
+                             antialias=True)[0]
 
 
 class Images(Dataset):
@@ -129,16 +146,39 @@ def main():
     p.add_argument("--resume", action="store_true")
     p.add_argument("--res", type=int, default=256,
                    help="obrazy w shardach; mniejsze tylko do testow")
+    p.add_argument("--train-res", type=int, default=0,
+                   help="przeskaluj do tej rozdzielczosci; 0 = bez zmian")
+    p.add_argument("--mults", type=int, nargs="+", default=[1, 2, 4, 4],
+                   help="jeden zjazd w dol na poziom, wiec dlugosc ustala siatke")
+    p.add_argument("--dec-base", type=int, default=0)
+    p.add_argument("--dec-res", type=int, default=2)
+    p.add_argument("--dec-attn", type=int, default=0)
+    p.add_argument("--fm", type=float, default=1.0,
+                   help="dopasowanie cech dyskryminatora; gestszy sygnal niz sam werdykt")
     a = p.parse_args()
 
     os.makedirs(a.out, exist_ok=True)
     dev = "cuda" if torch.cuda.is_available() else "cpu"
     ds = Images(a.data, res=a.res)
+    if a.train_res and a.train_res != a.res:
+        # Shards hold 256px; the grid is a power of two of whatever goes in, so
+        # 192px through three downsamples gives 24x24 = 576 tokens. Resizing
+        # rather than cropping, because the transformer will later be asked to
+        # draw whole scenes and a crop would teach it a zoomed-in world.
+        ds = Scaled(ds, a.train_res)
+        print(f"skalowanie {a.res} -> {a.train_res} px", flush=True)
     dl = DataLoader(ds, batch_size=a.batch, shuffle=True, num_workers=a.workers,
                     drop_last=True, pin_memory=(dev == "cuda"),
                     persistent_workers=(a.workers > 0))
 
-    model = VQVAE(n_codes=a.n_codes).to(dev)
+    arch = dict(n_codes=a.n_codes, mults=tuple(a.mults))
+    if a.dec_base:
+        arch.update(dec_base=a.dec_base, dec_res=a.dec_res, dec_attn=a.dec_attn)
+    model = VQVAE(**arch).to(dev)
+    res = a.train_res or a.res
+    grid = res // (2 ** len(a.mults))
+    print(f"siatka {grid}x{grid} = {grid*grid} tokenow na obraz "
+          f"({res*res//(grid*grid)} pikseli na token)", flush=True)
     model.quant.restart_below = a.restart_below
     print(f"VQ-VAE: {sum(q.numel() for q in model.parameters())/1e6:.1f}M parametrow, "
           f"codebook {a.n_codes}", flush=True)
@@ -215,7 +255,14 @@ def main():
         adv = torch.zeros((), device=dev)
         w = torch.zeros((), device=dev)
         if step >= a.disc_start:
-            adv = g_adv_loss(disc(out))
+            if a.fm > 0:
+                fake_logits, fake_feats = disc(out, features=True)
+                with torch.no_grad():
+                    _, real_feats = disc(x, features=True)
+                rec = rec + a.fm * feature_match_loss(real_feats, fake_feats)
+            else:
+                fake_logits = disc(out)
+            adv = g_adv_loss(fake_logits)
             last = raw.decoder.out.weight
             # Capped, because without a perceptual loss L1 is the ONLY thing
             # holding content together — and a pretrained perceptual network is
