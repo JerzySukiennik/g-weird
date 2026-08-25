@@ -153,6 +153,10 @@ def main():
     p.add_argument("--dec-base", type=int, default=0)
     p.add_argument("--dec-res", type=int, default=2)
     p.add_argument("--dec-attn", type=int, default=0)
+    p.add_argument("--sample-every", type=int, default=1000,
+                   help="zrzut PNG oryginal/rekonstrukcja — liczby juz piec razy "
+                        "mowily 'lepiej' przy obrazie mowiacym 'gorzej'")
+    p.add_argument("--base", type=int, default=64, help="szerokosc enkodera")
     p.add_argument("--fm", type=float, default=1.0,
                    help="dopasowanie cech dyskryminatora; gestszy sygnal niz sam werdykt")
     a = p.parse_args()
@@ -171,7 +175,7 @@ def main():
                     drop_last=True, pin_memory=(dev == "cuda"),
                     persistent_workers=(a.workers > 0))
 
-    arch = dict(n_codes=a.n_codes, mults=tuple(a.mults))
+    arch = dict(n_codes=a.n_codes, mults=tuple(a.mults), base=a.base)
     if a.dec_base:
         arch.update(dec_base=a.dec_base, dec_res=a.dec_res, dec_attn=a.dec_attn)
     model = VQVAE(**arch).to(dev)
@@ -307,6 +311,18 @@ def main():
                   f"commit {commit.float().mean().item():.4f}  "
                   f"adv {adv.item():.3f}  d {d_loss.item():.3f}  w {float(w):.2f}  "
                   f"codes {live}/{a.n_codes}  {time.time()-t0:.0f}s", flush=True)
+
+        if a.sample_every and (step % a.sample_every == 0 or step == ceiling):
+            from PIL import Image as _Img
+            k = min(4, x.size(0))
+            pair = torch.cat([x[:k], out[:k].detach()], dim=0).clamp(-1, 1)
+            g = ((pair + 1) * 127.5).byte().permute(0, 2, 3, 1).cpu().numpy()
+            hh, ww = g.shape[1:3]
+            sheet = np.zeros((2 * hh, k * ww, 3), dtype=np.uint8)
+            for j in range(k):
+                sheet[0:hh, j * ww:(j + 1) * ww] = g[j]
+                sheet[hh:2 * hh, j * ww:(j + 1) * ww] = g[k + j]
+            _Img.fromarray(sheet).save(os.path.join(a.out, f"probka-{step:06d}.png"))
 
         if step % a.ckpt_every == 0 or step == ceiling:
             blob = {"model": raw.state_dict(), "opt": opt.state_dict(),
