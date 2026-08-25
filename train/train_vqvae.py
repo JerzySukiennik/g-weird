@@ -296,7 +296,12 @@ def main():
         # reaches the generator. Its own scaler, because two optimizers must not
         # share one: unscale_ is per-optimizer state.
         d_loss = torch.zeros((), device=dev)
-        if step >= a.disc_start and step % a.disc_every == 0:
+        # Keyed to the step AFTER the increment below, so a logged step is one
+        # the discriminator actually ran on. Keyed to the value before it, every
+        # logged hundred fell on a skipped step and printed the freshly zeroed
+        # variable — "d 0.000" on every line, which reads as a dead
+        # discriminator and hides the real one. Same fix as train_decoder.py.
+        if step >= a.disc_start and (step + 1) % a.disc_every == 0:
             with torch.cuda.amp.autocast(enabled=(dev == "cuda")):
                 d_loss = hinge_d_loss(disc(x), disc(out.detach()))
             opt_d.zero_grad(set_to_none=True)
