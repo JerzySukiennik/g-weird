@@ -117,7 +117,13 @@ def main():
 
     dev = "cuda" if torch.cuda.is_available() else "cpu"
     os.makedirs(a.out, exist_ok=True)
-    cfg = MaskGITConfig()
+    # Dlugosc obrazu bierze sie z korpusu, nie z domyslnej wartosci w klasie.
+    # Tokenizer 576-tokenowy zastapil 256-tokenowy, a kazde miejsce, w ktorym ta
+    # liczba jest wpisana recznie, to okazja, zeby trenowac model o zlym
+    # ksztalcie i dowiedziec sie o tym po godzinach.
+    per = json.load(open(f"{a.data}_meta.json"))["per_image"]
+    cfg = MaskGITConfig(image_len=per)
+    print(f"korpus: {per} tokenow na obraz, sekwencja {cfg.block_size}", flush=True)
     ds = Pairs(a.data, a.tokenizer, cfg)
     dl = DataLoader(ds, batch_size=a.batch, shuffle=True, num_workers=a.workers,
                     drop_last=True, pin_memory=(dev == "cuda"),

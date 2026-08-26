@@ -111,7 +111,13 @@ def main():
 
     os.makedirs(a.out, exist_ok=True)
     dev = "cuda" if torch.cuda.is_available() else "cpu"
-    cfg = WeirdConfig()
+    # Dlugosc obrazu bierze sie z korpusu, nie z domyslnej wartosci w klasie.
+    # Tokenizer 576-tokenowy zastapil 256-tokenowy, a kazde miejsce, w ktorym ta
+    # liczba jest wpisana recznie, to okazja, zeby trenowac model o zlym
+    # ksztalcie i dowiedziec sie o tym po godzinach.
+    per = json.load(open(f"{a.data}_meta.json"))["per_image"]
+    cfg = WeirdConfig(image_len=per)
+    print(f"korpus: {per} tokenow na obraz, sekwencja {cfg.block_size}", flush=True)
     ds = TokenPairs(a.data, a.tokenizer, cfg)
     dl = DataLoader(ds, batch_size=a.batch, shuffle=True, num_workers=a.workers,
                     drop_last=True, pin_memory=(dev == "cuda"),
