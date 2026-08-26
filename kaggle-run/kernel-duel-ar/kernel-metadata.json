@@ -1,0 +1,20 @@
+{
+  "language": "python",
+  "kernel_type": "script",
+  "is_private": true,
+  "enable_gpu": true,
+  "enable_internet": true,
+  "machine_shape": "NvidiaTeslaT4",
+  "dataset_sources": [
+    "jerzysukiennik/gweird-text-576",
+    "jerzysukiennik/gweird-vqvae-576"
+  ],
+  "competition_sources": [],
+  "kernel_sources": [
+    "jerzysukiennik/gweird-enc576-a"
+  ],
+  "model_sources": [],
+  "id": "jerzysukiennik/gweird-duel-ar",
+  "title": "gweird duel ar",
+  "code_file": "duel_ar_kernel.py"
+}
