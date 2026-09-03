@@ -28,44 +28,8 @@ from torch.utils.data import Dataset, DataLoader
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from model.maskgit import MaskGIT, MaskGITConfig, mask_ratio    # noqa: E402
-from data.text_tokenizer import load as load_tok                # noqa: E402
+from train.corpus import TokenPairs  # noqa: E402
 from train.train_ar import lr_at                                # noqa: E402
-
-
-class Pairs(Dataset):
-    """[32 text][256 image]. No BOS_IMG: nothing here is being continued."""
-
-    def __init__(self, prefix, tok_path, cfg):
-        meta = json.load(open(f"{prefix}_meta.json"))
-        self.per = meta["per_image"]
-        if self.per != cfg.image_len:
-            raise SystemExit(f"korpus ma {self.per} tokenow na obraz, "
-                             f"model oczekuje {cfg.image_len}")
-        size = os.path.getsize(f"{prefix}_tokens.u16")
-        if size % (self.per * 2):
-            raise SystemExit(f"plik tokenow urwany: {size} B")
-        self.n = size // (self.per * 2)
-        if self.n != meta["n"]:
-            print(f"UWAGA: meta mowi {meta['n']:,}, plik ma {self.n:,} — "
-                  f"ufam plikowi", flush=True)
-        self.toks = np.memmap(f"{prefix}_tokens.u16", dtype=np.uint16, mode="r",
-                              shape=(self.n, self.per))
-        self.caps = json.load(open(f"{prefix}_captions.json"))
-        if len(self.caps) != self.n:
-            raise SystemExit(f"{len(self.caps):,} podpisow na {self.n:,} obrazow")
-        self.tok = load_tok(tok_path)
-        self.cfg = cfg
-        print(f"{self.n:,} par, {self.per} tokenow na obraz", flush=True)
-
-    def __len__(self):
-        return self.n
-
-    def __getitem__(self, i):
-        c = self.cfg
-        ids = self.tok.encode(self.caps[i]).ids[:c.text_len]
-        text = [c.text_token(t) for t in ids] + [c.PAD] * (c.text_len - len(ids))
-        img = [c.image_token(int(t)) for t in self.toks[i]]
-        return torch.tensor(text + img, dtype=torch.long)
 
 
 def collate(batch, cfg, drop_p):
@@ -99,8 +63,8 @@ def collate(batch, cfg, drop_p):
 
 def main():
     p = argparse.ArgumentParser()
-    p.add_argument("--data", required=True)
-    p.add_argument("--tokenizer", required=True)
+    p.add_argument("--data", nargs="+", required=True,
+                   help="jeden lub wiele prefiksow shardow, jak w train_ar.py")
     p.add_argument("--out", default="run")
     p.add_argument("--steps", type=int, default=60000)
     p.add_argument("--max-steps", type=int, default=0)
@@ -121,10 +85,10 @@ def main():
     # Tokenizer 576-tokenowy zastapil 256-tokenowy, a kazde miejsce, w ktorym ta
     # liczba jest wpisana recznie, to okazja, zeby trenowac model o zlym
     # ksztalcie i dowiedziec sie o tym po godzinach.
-    per = json.load(open(f"{a.data}_meta.json"))["per_image"]
+    per = json.load(open(f"{a.data[0]}_meta.json"))["per_image"]
     cfg = MaskGITConfig(image_len=per)
     print(f"korpus: {per} tokenow na obraz, sekwencja {cfg.block_size}", flush=True)
-    ds = Pairs(a.data, a.tokenizer, cfg)
+    ds = TokenPairs(a.data, cfg, insert_bos=False)
     dl = DataLoader(ds, batch_size=a.batch, shuffle=True, num_workers=a.workers,
                     drop_last=True, pin_memory=(dev == "cuda"),
                     collate_fn=lambda b: collate(b, cfg, a.text_dropout))

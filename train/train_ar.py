@@ -27,51 +27,7 @@ from torch.utils.data import Dataset, DataLoader
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from model.transformer import WeirdConfig, WeirdGPT  # noqa: E402
-from data.text_tokenizer import load as load_tok  # noqa: E402
-
-
-class TokenPairs(Dataset):
-    def __init__(self, prefix, tok_path, cfg):
-        meta = json.load(open(f"{prefix}_meta.json"))
-        self.per = meta["per_image"]
-        if self.per != cfg.image_len:
-            raise SystemExit(f"korpus ma {self.per} tokenow na obraz, "
-                             f"model oczekuje {cfg.image_len}")
-
-        # The count comes from the file, not from meta. When the corpus was
-        # finished in a second kernel run, meta recorded that run's counter
-        # (400015) instead of the whole corpus (1780125) — training would then
-        # have quietly used 22% of the data with nothing in the logs to say so.
-        # The bytes on disk cannot be wrong in that way, so they decide.
-        size = os.path.getsize(f"{prefix}_tokens.u16")
-        if size % (self.per * 2):
-            raise SystemExit(f"plik tokenow ma {size} B, nie dzieli sie na obrazy "
-                             f"po {self.per * 2} B — jest urwany")
-        self.n = size // (self.per * 2)
-        if self.n != meta["n"]:
-            print(f"UWAGA: meta mowi {meta['n']:,} par, plik ma {self.n:,} — "
-                  f"ufam plikowi", flush=True)
-
-        self.toks = np.memmap(f"{prefix}_tokens.u16", dtype=np.uint16, mode="r",
-                              shape=(self.n, self.per))
-        self.caps = json.load(open(f"{prefix}_captions.json"))
-        if len(self.caps) != self.n:
-            raise SystemExit(f"{len(self.caps):,} podpisow na {self.n:,} obrazow — "
-                             f"pary sie rozjechaly, nie trenuj na tym")
-        self.tok = load_tok(tok_path)
-        self.cfg = cfg
-        print(f"{self.n:,} par, {self.per} tokenow na obraz", flush=True)
-
-    def __len__(self):
-        return self.n
-
-    def __getitem__(self, i):
-        c = self.cfg
-        ids = self.tok.encode(self.caps[i]).ids[:c.text_len]
-        text = [c.text_token(t) for t in ids] + [c.PAD] * (c.text_len - len(ids))
-        img = [c.image_token(int(t)) for t in self.toks[i]]
-        seq = text + [c.BOS_IMG] + img
-        return torch.tensor(seq, dtype=torch.long), len(ids)
+from train.corpus import TokenPairs  # noqa: E402
 
 
 def collate(batch, cfg, drop_p):
@@ -93,8 +49,9 @@ def lr_at(step, total, base, warmup):
 
 def main():
     p = argparse.ArgumentParser()
-    p.add_argument("--data", required=True)
-    p.add_argument("--tokenizer", required=True)
+    p.add_argument("--data", nargs="+", required=True,
+                   help="jeden lub wiele prefiksow shardow; czytane jako jeden "
+                        "korpus, bez sklejania plikow")
     p.add_argument("--out", default="run")
     p.add_argument("--steps", type=int, default=60000)
     p.add_argument("--max-steps", type=int, default=0)
@@ -115,10 +72,10 @@ def main():
     # Tokenizer 576-tokenowy zastapil 256-tokenowy, a kazde miejsce, w ktorym ta
     # liczba jest wpisana recznie, to okazja, zeby trenowac model o zlym
     # ksztalcie i dowiedziec sie o tym po godzinach.
-    per = json.load(open(f"{a.data}_meta.json"))["per_image"]
+    per = json.load(open(f"{a.data[0]}_meta.json"))["per_image"]
     cfg = WeirdConfig(image_len=per)
     print(f"korpus: {per} tokenow na obraz, sekwencja {cfg.block_size}", flush=True)
-    ds = TokenPairs(a.data, a.tokenizer, cfg)
+    ds = TokenPairs(a.data, cfg)
     dl = DataLoader(ds, batch_size=a.batch, shuffle=True, num_workers=a.workers,
                     drop_last=True, pin_memory=(dev == "cuda"),
                     persistent_workers=(a.workers > 0),
