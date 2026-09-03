@@ -23,11 +23,16 @@ from tokenizers import Tokenizer, models, trainers, pre_tokenizers, normalizers
 
 def train(captions, vocab_size=8192, out="text.json"):
     tok = Tokenizer(models.BPE(unk_token="<unk>"))
-    # Lowercase and strip accents: captions are already lowercase web alt-text,
-    # and a prompt typed with capitals should hit the same tokens as one without.
-    tok.normalizer = normalizers.Sequence([normalizers.NFD(),
-                                           normalizers.Lowercase(),
-                                           normalizers.StripAccents()])
+    # Malymi literami, ale BEZ StripAccents. Wczesniej normalizacja szla
+    # NFD -> Lowercase -> StripAccents, wiec "dzien" i "dzień" byly DOKLADNIE
+    # tym samym ciagiem tokenow i modelowi nie dalo sie powiedziec, ktory
+    # napis ma narysowac. Test tokenizera obrazu pokazal, ze ogonek przezywa
+    # kodowanie i dekodowanie przy literach od ~24 px, wiec ograniczeniem byl
+    # tu slownik tekstu, nie reprezentacja obrazu. NFC zamiast NFD sklada
+    # znaki z powrotem w jeden punkt kodowy, zeby "ń" bylo jednym symbolem,
+    # a nie litera plus osobny znak diakrytyczny.
+    tok.normalizer = normalizers.Sequence([normalizers.NFC(),
+                                           normalizers.Lowercase()])
     tok.pre_tokenizer = pre_tokenizers.Whitespace()
     trainer = trainers.BpeTrainer(vocab_size=vocab_size,
                                   special_tokens=["<unk>"],

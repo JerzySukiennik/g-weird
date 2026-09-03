@@ -45,7 +45,7 @@ class MaskGITConfig:
     dropout: float = 0.0
     causal: bool = False          # the reason this class exists
 
-    text_len: int = 32
+    text_len: int = 64          # jak w transformer.py — patrz komentarz tam
     image_len: int = 256
     n_text: int = 8192
     n_image: int = 8192
@@ -167,7 +167,9 @@ def generate(model, text_rows, cfg, steps=12, scale=4.0, temp=1.0,
         seq = torch.cat([torch.cat([text_rows, blank], 0),
                          img.repeat(2, 1)], dim=1)
         logits = model(seq)[:, cfg.text_len:]
-        cond, uncond = logits[:n], logits[n:]
+        # fp32 dla prowadzenia — patrz komentarz w train/sample.py: przy
+        # scale 4 ekstrapolacja wychodzi z zakresu fp16 i softmax degeneruje.
+        cond, uncond = logits[:n].float(), logits[n:].float()
         g = uncond + scale * (cond - uncond)
         g[..., :lo] = -float("inf")
         g[..., hi + 1:] = -float("inf")

@@ -59,7 +59,13 @@ def generate(model, prefix, cfg, scale, temp, top_k):
     logits = model(prefix, kv=kv, pos=0)[:, -1]
     out = []
     for step in range(cfg.image_len):
-        cond, uncond = logits[:n], logits[n:]
+        # Prowadzenie liczone w fp32, nawet gdy model chodzi w fp16.
+        # Ekstrapolacja mnozy roznice logitow przez skale, wiec przy scale 4
+        # i logitach rzedu 10 wynik siega setek — a fp16 konczy sie na 65504.
+        # Po przekroczeniu zakresu softmax dostaje inf i zwraca degeneracje:
+        # ten sam checkpoint MaskGIT-a dawal plaskie plamy koloru na GPU w
+        # autocascie i normalna teksture na CPU w fp32. Ten sam wzor byl tutaj.
+        cond, uncond = logits[:n].float(), logits[n:].float()
         guided = uncond + scale * (cond - uncond)
 
         guided[:, :lo] = -math.inf          # never emit text or special tokens

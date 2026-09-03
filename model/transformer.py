@@ -46,7 +46,13 @@ class WeirdConfig:
     n_text: int = 8192          # BPE vocabulary for captions
     n_image: int = 8192         # VQ codebook
     n_special: int = 4          # PAD, BOS_TEXT, BOS_IMG, EOS
-    text_len: int = 32          # captions truncated to this
+    # 64, nie 32. Przy 32 tokenach BPE podpis konczy sie po ~20 slowach, a
+    # caly plan 1.2 stoi na gestych opisach: podpis z 200 znakow byl obcinany
+    # do jednej piatej i model nigdy nie widzial tego, za co placimy. Koszt to
+    # sekwencja 641 zamiast 609, czyli okolo 5% obliczen — najtansza zmiana w
+    # calym projekcie. Checkpointy 1.1 i starsze maja tu 32 i wczytuja sie
+    # poprawnie, bo ta wartosc jedzie w checkpoincie pod "cfg".
+    text_len: int = 64          # captions truncated to this
     image_len: int = 256        # 16x16 grid
     # Sized to the data, not to ambition. DALL-E mini ran 400M parameters over
     # 15M pairs; this corpus is 1.78M, about 12% of that, so a proportionally
