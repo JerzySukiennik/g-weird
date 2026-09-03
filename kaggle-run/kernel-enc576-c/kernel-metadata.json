@@ -1,0 +1,22 @@
+{
+  "id": "jerzysukiennik/gweird-enc576-c",
+  "title": "gweird enc576 c",
+  "code_file": "enc576_c_kernel.py",
+  "language": "python",
+  "kernel_type": "script",
+  "is_private": true,
+  "enable_gpu": true,
+  "enable_internet": true,
+  "machine_shape": "NvidiaTeslaT4",
+  "dataset_sources": [
+    "jerzysukiennik/gweird-vqvae-576"
+  ],
+  "competition_sources": [],
+  "kernel_sources": [
+    "jerzysukiennik/gweird-prep-t2i-0",
+    "jerzysukiennik/gweird-prep-t2i-1",
+    "jerzysukiennik/gweird-prep-t2i-2",
+    "jerzysukiennik/gweird-prep-t2i-3"
+  ],
+  "model_sources": []
+}
