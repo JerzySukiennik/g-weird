@@ -1,7 +1,7 @@
 {
-  "id": "jerzysukiennik/gweird-prep-t2i2m-a",
-  "title": "gweird prep t2i2m-a",
-  "code_file": "prep_t2i2m_a_kernel.py",
+  "id": "jerzysukiennik/gweird-ddb-6",
+  "title": "gweird ddb 6",
+  "code_file": "ddb_kernel.py",
   "language": "python",
   "kernel_type": "script",
   "is_private": true,

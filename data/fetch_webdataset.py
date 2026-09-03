@@ -79,38 +79,61 @@ def square_jpeg(data, res, quality=88):
     return buf.getvalue()
 
 
-def stream_shard(url, dst, tries=8):
-    """Shard to a file on disk, with ranged resume, and its size.
+def shard_size(url, tries=5):
+    """How many bytes the shard is supposed to be, from the server."""
+    for t in range(tries):
+        try:
+            req = urllib.request.Request(url, headers={"Range": "bytes=0-1"})
+            with urllib.request.urlopen(req, timeout=60) as r:
+                cr = r.headers.get("Content-Range", "")
+                if "/" in cr:
+                    return int(cr.rsplit("/", 1)[1])
+                return int(r.headers.get("Content-Length", 0))
+        except Exception:
+            if t == tries - 1:
+                raise
+            time.sleep(3 * (t + 1))
+    return 0
 
-    Not into memory: the t2i2m shards are ~9 GB each and a Kaggle kernel has
-    20 GB of working disk, so one shard plus the growing output already fills
-    it — holding a shard in RAM as well is how a kernel dies with no traceback.
-    Written to disk and deleted after use, one at a time.
 
-    A tar is read strictly front to back, so a stream that dies halfway takes
-    the rest of the shard with it. Ranged resume is the same fix that rescued
-    the 13 GB Colab download: one dead connection costs the bytes since the
-    last retry, not the shard.
+def stream_shard(url, dst, want, tries=10):
+    """Shard to a file on disk, resumed until it is the size the server said.
+
+    **The loop ends on a byte count, never on a closed connection.** The first
+    version returned as soon as `read()` came back empty, which is exactly what
+    a connection dropped mid-transfer looks like: the first run died on shard 5
+    with `tarfile.ReadError: unexpected end of data` after writing 1.71 of
+    3.5 GB, having already banked 240,000 images. That is the third time in
+    this project that "the transfer finished" has been mistaken for "the file
+    is complete" — a truncated Colab download and a zero-byte Kaggle checkpoint
+    were the other two.
+
+    Not into memory either: shards are gigabytes each against a 20 GB working
+    disk, so one is fetched, used and deleted at a time.
     """
     have = os.path.getsize(dst) if os.path.exists(dst) else 0
     for t in range(tries):
+        if have >= want:
+            return have
         try:
             req = urllib.request.Request(url, headers={"Range": f"bytes={have}-"})
-            with urllib.request.urlopen(req, timeout=180) as r:
-                with open(dst, "ab") as f:
-                    while True:
-                        chunk = r.read(1 << 22)
-                        if not chunk:
-                            return os.path.getsize(dst)
-                        f.write(chunk)
-                        have += len(chunk)
+            with urllib.request.urlopen(req, timeout=180) as r, open(dst, "ab") as f:
+                while True:
+                    chunk = r.read(1 << 22)
+                    if not chunk:
+                        break
+                    f.write(chunk)
+                    have += len(chunk)
         except Exception as e:
-            if t == tries - 1:
-                raise
-            have = os.path.getsize(dst) if os.path.exists(dst) else 0
-            print(f"    ponawiam od {have/1e6:.0f} MB ({e})", flush=True)
+            print(f"    blad przy {have/1e9:.2f} GB: {e}", flush=True)
+        have = os.path.getsize(dst) if os.path.exists(dst) else 0
+        if have < want:
+            print(f"    mam {have/1e9:.2f} z {want/1e9:.2f} GB, ponawiam",
+                  flush=True)
             time.sleep(min(30, 3 * (t + 1)))
-    return os.path.getsize(dst)
+    if have != want:
+        raise SystemExit(f"{dst}: {have} z {want} B po {tries} probach")
+    return have
 
 
 def main():
@@ -141,51 +164,61 @@ def main():
         url = BASE.format(repo=spec["repo"], path=spec["path"].format(i=i))
         print(f"[{i}] {url.rsplit('/', 1)[-1]}", flush=True)
         tmp = f"{a.out_prefix}.shard.tar"
-        nbytes = stream_shard(url, tmp)
-        print(f"    {nbytes/1e9:.2f} GB", flush=True)
+        if os.path.exists(tmp):
+            os.remove(tmp)
+        want = shard_size(url)
+        nbytes = stream_shard(url, tmp, want)
+        print(f"    {nbytes/1e9:.2f} GB (komplet)", flush=True)
 
         # ignore_zeros: shardy sklejane z kawalkow miewaja bloki zerowe w
         # srodku, na ktorych zwykly czytnik tar konczy w polowie po cichu.
         tf = tarfile.open(tmp, mode="r:", ignore_zeros=True)
         pending = {}
-        for m in tf:
-            if not m.isfile():
-                continue
-            stem, ext = os.path.splitext(m.name)
-            ext = ext.lower()
-            if ext not in (".jpg", ".jpeg", ".png", ".webp", ".json", ".txt"):
-                continue
-            slot = pending.setdefault(stem, {})
-            slot["meta" if ext in (".json", ".txt") else "img"] = tf.extractfile(m).read()
-            if "img" not in slot or "meta" not in slot:
-                continue
-            blob = pending.pop(stem)
-            seen += 1
+        # Jeden uszkodzony shard nie moze zabrac ze soba calego biegu. Poprzedni
+        # bieg mial juz zebrane 240 000 obrazow, kiedy padl na szostym
+        # shardzie, i stracil wszystko, bo wyjatek doszedl na sama gore.
+        try:
+            for m in tf:
+                if not m.isfile():
+                    continue
+                stem, ext = os.path.splitext(m.name)
+                ext = ext.lower()
+                if ext not in (".jpg", ".jpeg", ".png", ".webp", ".json", ".txt"):
+                    continue
+                slot = pending.setdefault(stem, {})
+                slot["meta" if ext in (".json", ".txt") else "img"] = tf.extractfile(m).read()
+                if "img" not in slot or "meta" not in slot:
+                    continue
+                blob = pending.pop(stem)
+                seen += 1
 
-            try:
-                meta = json.loads(blob["meta"])
-            except Exception:
-                meta = {"caption": blob["meta"].decode("utf-8", "replace")}
-            cap = spec["caption"](meta)
-            if a.source == "dalle3" and kept % a.short_every == 0:
-                cap = spec["short"](meta) or cap
-            cap = " ".join(str(cap).split())[:a.max_chars]
-            if len(cap.split()) < a.min_words:
-                continue
-            try:
-                jpg = square_jpeg(blob["img"], a.res)
-            except Exception:
-                continue
+                try:
+                    meta = json.loads(blob["meta"])
+                except Exception:
+                    meta = {"caption": blob["meta"].decode("utf-8", "replace")}
+                cap = spec["caption"](meta)
+                if a.source == "dalle3" and kept % a.short_every == 0:
+                    cap = spec["short"](meta) or cap
+                cap = " ".join(str(cap).split())[:a.max_chars]
+                if len(cap.split()) < a.min_words:
+                    continue
+                try:
+                    jpg = square_jpeg(blob["img"], a.res)
+                except Exception:
+                    continue
 
-            fh.write(jpg)
-            offsets.append(offsets[-1] + len(jpg))
-            captions.append(cap)
-            kept += 1
-            if kept % 20000 == 0:
-                fh.flush()
-                print(f"    {kept} zachowanych z {seen}", flush=True)
-            if a.max_images and kept >= a.max_images:
-                break
+                fh.write(jpg)
+                offsets.append(offsets[-1] + len(jpg))
+                captions.append(cap)
+                kept += 1
+                if kept % 20000 == 0:
+                    fh.flush()
+                    print(f"    {kept} zachowanych z {seen}", flush=True)
+                if a.max_images and kept >= a.max_images:
+                    break
+        except (tarfile.ReadError, EOFError) as e:
+            print(f"    shard uszkodzony ({e}) — pomijam, mam {kept}",
+                  flush=True)
         tf.close()
         os.remove(tmp)          # 9 GB na dysku o pojemnosci 20 GB
         if a.max_images and kept >= a.max_images:

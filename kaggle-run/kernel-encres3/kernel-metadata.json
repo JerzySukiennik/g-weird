@@ -1,0 +1,27 @@
+{
+  "id": "jerzysukiennik/gweird-encres3",
+  "title": "gweird encres3",
+  "code_file": "encres3_kernel.py",
+  "language": "python",
+  "kernel_type": "script",
+  "is_private": true,
+  "enable_gpu": true,
+  "enable_internet": true,
+  "machine_shape": "NvidiaTeslaT4",
+  "dataset_sources": [],
+  "competition_sources": [],
+  "kernel_sources": [
+    "jerzysukiennik/gweird-ddb-0",
+    "jerzysukiennik/gweird-ddb-1",
+    "jerzysukiennik/gweird-ddb-2",
+    "jerzysukiennik/gweird-ddb-3",
+    "jerzysukiennik/gweird-ddb-4",
+    "jerzysukiennik/gweird-ddb-5",
+    "jerzysukiennik/gweird-ddb-6",
+    "jerzysukiennik/gweird-ddb-7",
+    "jerzysukiennik/gweird-coco",
+    "jerzysukiennik/gweird-jdb-0",
+    "jerzysukiennik/gweird-vqvae"
+  ],
+  "model_sources": []
+}

@@ -1,0 +1,18 @@
+{
+  "id": "jerzysukiennik/gweird-decoder",
+  "title": "gweird decoder",
+  "code_file": "dec_kernel.py",
+  "language": "python",
+  "kernel_type": "script",
+  "is_private": true,
+  "enable_gpu": true,
+  "enable_internet": true,
+  "machine_shape": "NvidiaTeslaT4",
+  "dataset_sources": [],
+  "competition_sources": [],
+  "kernel_sources": [
+    "jerzysukiennik/gweird-prep-5",
+    "jerzysukiennik/gweird-vqvae"
+  ],
+  "model_sources": []
+}

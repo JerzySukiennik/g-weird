@@ -1,0 +1,23 @@
+{
+  "id": "jerzysukiennik/gweird-encresume",
+  "title": "gweird encresume",
+  "code_file": "encresume_kernel.py",
+  "language": "python",
+  "kernel_type": "script",
+  "is_private": "true",
+  "enable_gpu": true,
+  "enable_internet": true,
+  "machine_shape": "NvidiaTeslaT4",
+  "dataset_sources": [],
+  "competition_sources": [],
+  "kernel_sources": [
+    "jerzysukiennik/gweird-prep-0",
+    "jerzysukiennik/gweird-prep-1",
+    "jerzysukiennik/gweird-prep-2",
+    "jerzysukiennik/gweird-prep-3",
+    "jerzysukiennik/gweird-prep-4",
+    "jerzysukiennik/gweird-prep-5",
+    "jerzysukiennik/gweird-vqvae"
+  ],
+  "model_sources": []
+}

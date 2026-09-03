@@ -1,4 +1,4 @@
-"""Kaggle CPU cell: DALL-E 3, opisy długie i krótkie 90/10.
+"""Kaggle CPU cell: CC12M, prawdziwe zdjęcia dla różnorodności.
 
 CPU on purpose: Kaggle caps GPU hours weekly but not CPU notebooks, so fetching
 and transcoding costs nothing out of the 45 hours that encoding and training
@@ -7,7 +7,7 @@ need.
 **Sized to the disk, not to ambition.** The shards turned out to be 7-11 GB
 each, not the 3.5 GB the first attempt assumed — that number came from a
 download that had itself been truncated. One shard plus the growing output has
-to fit in 20 GB, so each kernel takes 160000 images and no more.
+to fit in 20 GB, so each kernel takes 250000 images and no more.
 """
 
 import os
@@ -21,9 +21,9 @@ subprocess.run(["git", "clone", "--depth", "1", REPO, f"{WORK}/g-weird"], check=
 os.chdir(f"{WORK}/g-weird")
 
 subprocess.run([sys.executable, "data/fetch_webdataset.py",
-                "--source", "dalle3",
-                "--first-shard", "0", "--shards", "12",
-                "--res", "256", "--max-images", "160000",
+                "--source", "cc12m",
+                "--first-shard", "60", "--shards", "60",
+                "--res", "256", "--max-images", "250000",
                 "--out-prefix", f"{WORK}/gweird"], check=True)
 
 for f in sorted(os.listdir(WORK)):

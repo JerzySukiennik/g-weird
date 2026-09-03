@@ -1,0 +1,17 @@
+{
+  "id": "jerzysukienik/gweird-trainar2",
+  "title": "gweird trainar2",
+  "code_file": "trainar2_kernel.py",
+  "language": "python",
+  "kernel_type": "script",
+  "is_private": "true",
+  "enable_gpu": true,
+  "enable_internet": true,
+  "machine_shape": "NvidiaTeslaT4",
+  "dataset_sources": [],
+  "competition_sources": [],
+  "kernel_sources": [
+    "jerzysukienik/gweird-encres2"
+  ],
+  "model_sources": []
+}

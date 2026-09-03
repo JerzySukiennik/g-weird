@@ -1,0 +1,23 @@
+{
+  "id": "jerzysukiennik/gweird-encode2",
+  "title": "gweird encode2",
+  "code_file": "encode2_kernel.py",
+  "language": "python",
+  "kernel_type": "script",
+  "is_private": "true",
+  "enable_gpu": true,
+  "enable_internet": true,
+  "machine_shape": "NvidiaTeslaT4",
+  "dataset_sources": [],
+  "competition_sources": [],
+  "kernel_sources": [
+    "jerzysukienik/gweird-prep-0",
+    "jerzysukienik/gweird-prep-1",
+    "jerzysukienik/gweird-prep-2",
+    "jerzysukienik/gweird-prep-3",
+    "jerzysukienik/gweird-prep-4",
+    "jerzysukienik/gweird-prep-5",
+    "jerzysukienik/gweird-vqvae"
+  ],
+  "model_sources": []
+}

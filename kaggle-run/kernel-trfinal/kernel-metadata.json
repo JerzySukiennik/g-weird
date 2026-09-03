@@ -1,0 +1,19 @@
+{
+  "id": "jerzysukiennik/gweird-train-final",
+  "title": "gweird train final",
+  "code_file": "trfinal_kernel.py",
+  "language": "python",
+  "kernel_type": "script",
+  "is_private": true,
+  "enable_gpu": true,
+  "enable_internet": true,
+  "machine_shape": "NvidiaTeslaT4",
+  "dataset_sources": [
+    "jerzysukiennik/gweird-ckpt-30k"
+  ],
+  "competition_sources": [],
+  "kernel_sources": [
+    "jerzysukiennik/gweird-encmain"
+  ],
+  "model_sources": []
+}
