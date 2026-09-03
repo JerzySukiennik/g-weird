@@ -133,12 +133,28 @@ def mask_ratio(u):
 
 
 @torch.no_grad()
-def generate(model, text_rows, cfg, steps=10, scale=4.0, temp=1.0):
-    """Fill a whole image in `steps` rounds instead of 256.
+def generate(model, text_rows, cfg, steps=12, scale=4.0, temp=1.0,
+             choice_temp=4.5):
+    """Fill a whole image in `steps` rounds instead of 576.
 
     Classifier-free guidance rides along the batch exactly as in the
     autoregressive sampler: the prompt and a blanked copy are predicted
     together and the logits extrapolated away from the unconditional answer.
+
+    **The Gumbel noise on the confidence is not optional and is not in the
+    MaskGIT paper.** It lives only in Google's released code, and the paper's
+    one sentence about it points at a section that does not exist. Without it
+    the scheme is greedy: the first round keeps whatever the model is most sure
+    about, which is flat background, and every later round is conditioned on
+    that flatness until the whole image collapses to one colour. That is
+    exactly what our first MaskGIT run produced. The PyTorch reproduction
+    measured the cost with everything else held fixed: FID 66.7 without the
+    noise against 7.7 with it (arXiv:2310.14400).
+
+    The temperature decays linearly to zero, so the last round is pure greedy
+    and the early rounds are nearly free choices — which is the point: the
+    model must be allowed to commit to something other than the safest token
+    while there is still context left to justify it.
     """
     device = text_rows.device
     n = text_rows.size(0)
@@ -161,8 +177,19 @@ def generate(model, text_rows, cfg, steps=10, scale=4.0, temp=1.0):
         pick = torch.multinomial(flat, 1).view(n, cfg.image_len)
         conf = flat.gather(1, pick.view(-1, 1)).view(n, cfg.image_len)
 
-        # Positions already decided keep their token and are never reconsidered;
-        # giving them infinite confidence is how they stay put.
+        # log p + T*Gumbel, T decaying to zero. Ranking happens in log space
+        # because that is where an additive Gumbel is the right perturbation;
+        # adding noise to a raw probability would barely move a token whose
+        # probability is 0.9 and would dominate one at 0.001.
+        t_choice = choice_temp * (1.0 - (step + 1) / steps)
+        gum = -torch.log(-torch.log(
+            torch.rand_like(conf).clamp_min(1e-10)).clamp_min(1e-10))
+        conf = conf.clamp_min(1e-10).log() + t_choice * gum
+
+        # Positions already decided keep their token and are never reconsidered.
+        # Infinity rather than 1.0: the noise above can push a fresh token's
+        # score past any finite ceiling, and a decided token that loses its
+        # place gets re-drawn, which is the one thing this loop must never do.
         decided = img != cfg.MASK
         pick = torch.where(decided, img, pick)
         conf = torch.where(decided, torch.full_like(conf, float("inf")), conf)
@@ -172,6 +199,11 @@ def generate(model, text_rows, cfg, steps=10, scale=4.0, temp=1.0):
         keep_masked = int(mask_ratio(u).item() * cfg.image_len)
         if step == steps - 1:
             keep_masked = 0
+        # At least one token must be settled per round, or a schedule that
+        # rounds badly can spin without ever finishing.
+        keep_masked = min(keep_masked, int(decided.logical_not().sum(1).min()) - 1
+                          if n else keep_masked)
+        keep_masked = max(keep_masked, 0)
 
         img = pick
         if keep_masked > 0:
