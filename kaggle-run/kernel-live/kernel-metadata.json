@@ -1,0 +1,15 @@
+{
+  "id": "jerzysukiennik/gweird-live",
+  "title": "gweird live",
+  "code_file": "live_kernel.py",
+  "language": "python",
+  "kernel_type": "script",
+  "is_private": true,
+  "enable_gpu": true,
+  "enable_internet": true,
+  "machine_shape": "NvidiaTeslaT4",
+  "dataset_sources": ["jerzysukiennik/gweird-text-12", "jerzysukiennik/gweird-vqvae-576"],
+  "competition_sources": [],
+  "kernel_sources": ["jerzysukiennik/gweird-enc576-a", "jerzysukiennik/gweird-enc576-b", "jerzysukiennik/gweird-enc576-c", "jerzysukiennik/gweird-enc576-d"],
+  "model_sources": []
+}
