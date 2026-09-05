@@ -52,8 +52,15 @@ if n != 4017878:
 txt = glob.glob("/kaggle/input/**/text.json", recursive=True)
 vqs = glob.glob("/kaggle/input/**/vqvae.pt", recursive=True)
 cks = glob.glob("/kaggle/input/**/gweird.pt", recursive=True)
-if len(txt) != 1 or len(vqs) != 1 or len(cks) != 1:
+if len(txt) != 1 or len(vqs) != 1 or not cks:
     raise SystemExit(f"wejscia: text {txt}, vqvae {vqs}, ckpt {cks}")
+# Kilka checkpointow naraz jest normalne: dataset z Colaba plus wyjscie
+# poprzedniego kernela. Wygrywa najwyzszy krok, wiec kolejne sesje lancuchuja
+# sie przez wyjscia kerneli bez sekretow i bez recznego wersjonowania datasetu.
+steps = {c: torch.load(c, map_location="cpu", weights_only=False)["step"] for c in cks}
+for c, st in sorted(steps.items(), key=lambda kv: kv[1]):
+    print(f"  checkpoint krok {st}: {c}", flush=True)
+cks = [max(steps, key=steps.get)]
 
 # Wejscia sa tylko do odczytu, a pack_captions pisze obok tokenow — wiec
 # shardy dostaja dowiazania w katalogu roboczym, a tablice podpisow laduja tam.
