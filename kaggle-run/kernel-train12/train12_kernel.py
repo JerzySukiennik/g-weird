@@ -22,7 +22,7 @@ import torch
 REPO = "https://github.com/JerzySukiennik/g-weird.git"
 WORK = "/kaggle/working"
 STEPS_TOTAL = 300000
-MAX_STEPS = 36000          # ~1.1 s/krok na T4x2 -> ~11 h, pod limitem 12 h
+MAX_STEPS = 30000          # zmierzone 1.21 s/krok na T4x2 -> ~10 h. 36000 wyszlo 11.9 h i sesja zostala ubita o 12 h bez zapisu koncowego i bez probki
 DATASET = "jerzysukiennik/gweird-12-ar"
 PROMPTS = ["a horse standing in a field", "a red double decker bus on a street",
            "a cat wearing sunglasses", "portrait of an old man with a beard",
