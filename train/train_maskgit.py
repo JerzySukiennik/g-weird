@@ -77,6 +77,7 @@ def main():
     p.add_argument("--log-every", type=int, default=100)
     p.add_argument("--ckpt-every", type=int, default=500)
     p.add_argument("--resume", action="store_true")
+    p.add_argument("--label-smoothing", type=float, default=0.1)
     a = p.parse_args()
 
     dev = "cuda" if torch.cuda.is_available() else "cpu"
@@ -86,7 +87,7 @@ def main():
     # liczba jest wpisana recznie, to okazja, zeby trenowac model o zlym
     # ksztalcie i dowiedziec sie o tym po godzinach.
     per = json.load(open(f"{a.data[0]}_meta.json"))["per_image"]
-    cfg = MaskGITConfig(image_len=per)
+    cfg = MaskGITConfig(image_len=per, label_smoothing=a.label_smoothing)
     print(f"korpus: {per} tokenow na obraz, sekwencja {cfg.block_size}", flush=True)
     ds = TokenPairs(a.data, cfg, insert_bos=False)
     dl = DataLoader(ds, batch_size=a.batch, shuffle=True, num_workers=a.workers,

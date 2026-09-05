@@ -44,6 +44,10 @@ class MaskGITConfig:
     rope_theta: float = 10000.0
     dropout: float = 0.0
     causal: bool = False          # the reason this class exists
+    # 0.1 jak w oryginalnym MaskGIT-cie. Przy 8192 kodach wiele roznych tokenow
+    # dekoduje sie do prawie tego samego kawalka obrazu, wiec twarde "tylko ten
+    # jeden jest dobry" karze model za odpowiedzi, ktore na obrazku sa poprawne.
+    label_smoothing: float = 0.1
 
     text_len: int = 64          # jak w transformer.py — patrz komentarz tam
     image_len: int = 256
@@ -114,7 +118,7 @@ class MaskGIT(nn.Module):
             return logits
         loss = F.cross_entropy(
             logits.reshape(-1, logits.size(-1)), targets.reshape(-1),
-            reduction="none").view(b, t)
+            reduction="none", label_smoothing=self.config.label_smoothing).view(b, t)
         if mask is not None:
             loss = (loss * mask).sum() / mask.sum().clamp(min=1)
         else:
