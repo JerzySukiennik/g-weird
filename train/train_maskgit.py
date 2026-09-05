@@ -33,7 +33,10 @@ from train.train_ar import lr_at                                # noqa: E402
 
 
 def collate(batch, cfg, drop_p):
-    seqs = torch.stack(batch)
+    # TokenPairs oddaje (sekwencja, dlugosc podpisu); tu potrzebna jest tylko
+    # sekwencja. Pierwszy bieg Live padl na tym w pierwszej partii — test
+    # dymny sprawdzal dataset, ale nie collate.
+    seqs = torch.stack([b[0] for b in batch])
     target = seqs.clone()
 
     # One ratio per example, from the cosine schedule.
