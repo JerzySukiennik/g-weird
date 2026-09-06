@@ -77,7 +77,7 @@ print(f"krok {before} -> {after}", flush=True)
 # --- dowod na obrazkach: te same osiem podpisow co 1.1 i 1.2 -----------------
 subprocess.run([sys.executable, "train/sample_maskgit.py",
                 "--ckpt", f"{WORK}/run/maskgit.pt", "--vqvae", vqs[0],
-                "--tokenizer", txt[0], "--steps", "12", "--cfg-scale", "4.0",
+                "--tokenizer", txt[0], "--steps", "24", "--cfg-scale", "2.0", "--temp", "0.7",
                 "--out", f"{WORK}/proba-live-{after}.png", "--prompts", *PROMPTS], check=False)
 subprocess.run(["rm", "-rf", f"{WORK}/data"], check=False)   # dowiazania, nie dane
 print("gotowe — checkpoint w /kaggle/working/run/maskgit.pt, probka w proba-live-*.png", flush=True)

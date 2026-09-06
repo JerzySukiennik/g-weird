@@ -10,7 +10,8 @@
   "machine_shape": "NvidiaTeslaT4",
   "dataset_sources": [
     "jerzysukiennik/gweird-text-12",
-    "jerzysukiennik/gweird-vqvae-576"
+    "jerzysukiennik/gweird-vqvae-576",
+    "jerzysukiennik/gweird-live-mg"
   ],
   "competition_sources": [],
   "kernel_sources": [

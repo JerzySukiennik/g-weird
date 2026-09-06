@@ -25,9 +25,14 @@ def main():
     p.add_argument("--tokenizer", required=True)
     p.add_argument("--prompts", nargs="+", required=True)
     p.add_argument("--out", default="out/sample-maskgit.png")
-    p.add_argument("--steps", type=int, default=12)
+    p.add_argument("--steps", type=int, default=24)
     p.add_argument("--cfg-scale", type=float, default=4.0)
-    p.add_argument("--temp", type=float, default=1.0)
+    # 0.7, nie 1.0. Zmierzone na checkpoincie z 25000 krokow: przy 1.0 kazde
+    # ustawienie prowadzenia, rund i szumu daje teksturowa sieczke; przy 0.7
+    # pojawia sie kompozycja (laka, niebo, sylwetki), przy 0.5 wszystko zapada
+    # sie w jednolite plamy. Rozklad nad 8192 kodami jest wczesnie plaski i
+    # sampler musi go zaostrzyc, zeby model mogl sie zdecydowac.
+    p.add_argument("--temp", type=float, default=0.7)
     p.add_argument("--choice-temp", type=float, default=4.5)
     p.add_argument("--seed", type=int, default=0)
     a = p.parse_args()
