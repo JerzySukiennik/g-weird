@@ -11,7 +11,7 @@ among all attached inputs wins.
 """
 
 STEPS_TOTAL = 60000      # horyzont harmonogramu (jak 1.1, ta sama efektywna partia 64)
-MAX_STEPS   = 36000      # ile krokow w TEJ sesji: ~1.1 s/krok na T4x2 -> ~11 h
+MAX_STEPS   = 25000      # zmierzone 1.21 s/krok -> ~8.4 h; 36000 uderzylo w sciane 12 h na 35400 bez zapisu koncowego
 PROMPTS = ["a horse standing in a field", "a red double decker bus on a street",
            "a cat wearing sunglasses", "portrait of an old man with a beard",
            "a bowl of soup on a wooden table", "a castle on a mountain at sunset",
