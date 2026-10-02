@@ -144,6 +144,8 @@ def main():
     p.add_argument("--log-every", type=int, default=50)
     p.add_argument("--ckpt-every", type=int, default=500)
     p.add_argument("--resume", action="store_true")
+    p.add_argument("--finetune-from", default="",
+                   help="wczytaj wagi z tego checkpointu i zacznij od kroku 0")
     p.add_argument("--res", type=int, default=256,
                    help="obrazy w shardach; mniejsze tylko do testow")
     p.add_argument("--train-res", type=int, default=0,
@@ -213,6 +215,22 @@ def main():
 
     step = 0
     ckpt_path = os.path.join(a.out, "vqvae.pt")
+    # Dostrajanie: wagi z cudzego checkpointu, ale licznik krokow, optymalizator
+    # i harmonogram tempa od zera. --resume nie nadaje sie do tego, bo bierze
+    # krok z checkpointu: przy kroku 40000 i celu 20000 trening konczy sie bez
+    # jednego kroku, a przy celu 49000 harmonogram startuje na dnie kosinusa
+    # (tempo ~1.7e-5) i dostrajanie do nowej rozdzielczosci prawie nic nie robi.
+    # Dziala tylko w pierwszej sesji; kolejne wznawiaja z wlasnego checkpointu.
+    if a.finetune_from and not (a.resume and os.path.exists(ckpt_path)):
+        fk = torch.load(a.finetune_from, map_location="cpu", weights_only=False)
+        missing, unexpected = raw.load_state_dict(fk["model"], strict=False)
+        if missing or unexpected:
+            print(f"dostrajanie z roznicami — brakujace: {list(missing)}, "
+                  f"nieoczekiwane: {list(unexpected)}", flush=True)
+        if "disc" in fk:
+            disc.load_state_dict(fk["disc"])
+        print(f"dostrajanie z {a.finetune_from} (krok zrodlowy {fk['step']}), "
+              f"harmonogram od zera", flush=True)
     if a.resume and os.path.exists(ckpt_path):
         ck = torch.load(ckpt_path, map_location="cpu", weights_only=False)
         # Tolerant, because the quantizer gained a step counter after the first
