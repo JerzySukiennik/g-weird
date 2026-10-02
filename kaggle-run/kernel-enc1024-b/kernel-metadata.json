@@ -1,0 +1,22 @@
+{
+  "id": "jerzysukiennik/gweird-enc1024-b",
+  "title": "gweird enc1024 b",
+  "code_file": "enc1024_b_kernel.py",
+  "language": "python",
+  "kernel_type": "script",
+  "is_private": true,
+  "enable_gpu": true,
+  "enable_internet": true,
+  "machine_shape": "NvidiaTeslaT4",
+  "dataset_sources": [
+    "jerzysukiennik/gweird-vqvae-256"
+  ],
+  "competition_sources": [],
+  "kernel_sources": [
+    "jerzysukiennik/gweird-ddb-4",
+    "jerzysukiennik/gweird-ddb-5",
+    "jerzysukiennik/gweird-ddb-6",
+    "jerzysukiennik/gweird-ddb-7"
+  ],
+  "model_sources": []
+}
