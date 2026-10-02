@@ -1,0 +1,15 @@
+{
+  "id": "jerzysukiennik/gweird-vq256",
+  "title": "gweird vq256",
+  "code_file": "vq256_kernel.py",
+  "language": "python",
+  "kernel_type": "script",
+  "is_private": true,
+  "enable_gpu": true,
+  "enable_internet": true,
+  "machine_shape": "NvidiaTeslaT4",
+  "dataset_sources": ["jerzysukiennik/gweird-vqvae-576"],
+  "competition_sources": [],
+  "kernel_sources": ["jerzysukiennik/gweird-prep-t2i-0", "jerzysukiennik/gweird-prep-dalle3", "jerzysukiennik/gweird-prep-cc12m-0", "jerzysukiennik/gweird-ddb-0"],
+  "model_sources": []
+}
