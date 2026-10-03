@@ -138,8 +138,16 @@ def mask_ratio(u):
 
 @torch.no_grad()
 def generate(model, text_rows, cfg, steps=12, scale=4.0, temp=1.0,
-             choice_temp=4.5):
+             choice_temp=4.5, init=None):
     """Fill a whole image in `steps` rounds instead of 576.
+
+    `init` turns this into editing: image-token ids with cfg.MASK where the
+    picture is to be redrawn and the original tokens everywhere else. Those stay
+    put (infinite confidence) and the model fills the hole conditioned on them
+    and on the caption. The schedule is counted from the number of tokens that
+    start out hidden, per row, not from the whole image — otherwise a hole of 144
+    tokens would settle one token per round for ten rounds and the rest in a
+    lump at the end.
 
     Classifier-free guidance rides along the batch exactly as in the
     autoregressive sampler: the prompt and a blanked copy are predicted
@@ -164,7 +172,14 @@ def generate(model, text_rows, cfg, steps=12, scale=4.0, temp=1.0,
     n = text_rows.size(0)
     lo, hi = cfg.image_token(0), cfg.image_token(cfg.n_image - 1)
 
-    img = torch.full((n, cfg.image_len), cfg.MASK, dtype=torch.long, device=device)
+    if init is None:
+        img = torch.full((n, cfg.image_len), cfg.MASK, dtype=torch.long, device=device)
+    else:
+        img = init.to(device).clone()
+        if img.shape != (n, cfg.image_len):
+            raise ValueError(f"init ma ksztalt {tuple(img.shape)}, "
+                             f"oczekiwano {(n, cfg.image_len)}")
+    n0 = (img == cfg.MASK).sum(1)             # zasluniete na starcie, per wiersz
     blank = torch.full_like(text_rows, cfg.PAD)
 
     for step in range(steps):
@@ -188,9 +203,19 @@ def generate(model, text_rows, cfg, steps=12, scale=4.0, temp=1.0,
         # adding noise to a raw probability would barely move a token whose
         # probability is 0.9 and would dominate one at 0.001.
         t_choice = choice_temp * (1.0 - (step + 1) / steps)
-        gum = -torch.log(-torch.log(
-            torch.rand_like(conf).clamp_min(1e-10)).clamp_min(1e-10))
+        # Gumbel(0,1) = -log(-log(u)), u in (0,1). log(u) is NEGATIVE, so the
+        # inner clamp must keep u away from 0 and 1 — it must not touch the log.
+        # The first version clamped the log itself to +1e-10, negated it and took
+        # the log of a negative number: NaN for every input. From 2026-09-03 until
+        # 2026-10-03 every confidence was NaN, the re-masking order was arbitrary,
+        # and every MaskGIT picture in that month (Live 25k and 50k, both sampler
+        # sweeps) came from a sampler that never ranked anything.
+        u = torch.rand_like(conf).clamp(1e-10, 1 - 1e-7)
+        gum = -torch.log(-torch.log(u))
         conf = conf.clamp_min(1e-10).log() + t_choice * gum
+        if torch.isnan(conf).any():
+            raise RuntimeError("pewnosc tokenow zawiera NaN — ranking dozaslaniania "
+                               "bylby przypadkowy, a obraz wygladalby tylko 'slabo'")
 
         # Positions already decided keep their token and are never reconsidered.
         # Infinity rather than 1.0: the noise above can push a fresh token's
@@ -202,20 +227,25 @@ def generate(model, text_rows, cfg, steps=12, scale=4.0, temp=1.0,
 
         # How many should still be hidden after this round.
         u = torch.tensor((step + 1) / steps, device=device)
-        keep_masked = int(mask_ratio(u).item() * cfg.image_len)
+        masked_now = decided.logical_not().sum(1)
+        keep_masked = (mask_ratio(u).item() * n0.float()).long()
         if step == steps - 1:
-            keep_masked = 0
+            keep_masked = torch.zeros_like(keep_masked)
         # At least one token must be settled per round, or a schedule that
-        # rounds badly can spin without ever finishing.
-        keep_masked = min(keep_masked, int(decided.logical_not().sum(1).min()) - 1
-                          if n else keep_masked)
-        keep_masked = max(keep_masked, 0)
+        # rounds badly can spin without ever finishing; and never more hidden
+        # than there are hidden now, or a settled token would be re-drawn.
+        keep_masked = torch.minimum(keep_masked, (masked_now - 1).clamp(min=0))
+        keep_masked = keep_masked.clamp(min=0)
 
         img = pick
-        if keep_masked > 0:
+        if int(keep_masked.max()) > 0:
             # Re-mask the least confident: the model gets another look at them
             # once its neighbours are settled, which is the entire mechanism.
-            cut = conf.topk(keep_masked, dim=1, largest=False).indices
-            img = img.scatter(1, cut, cfg.MASK)
+            # Per-row rank instead of one shared top-k, because rows can start
+            # with holes of different sizes; settled tokens carry infinite
+            # confidence and so always rank last.
+            ranks = conf.argsort(dim=1).argsort(dim=1)
+            img = torch.where(ranks < keep_masked[:, None],
+                              torch.full_like(img, cfg.MASK), img)
 
     return img - lo
