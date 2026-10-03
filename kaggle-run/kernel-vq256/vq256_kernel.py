@@ -15,6 +15,18 @@ for an untouched checkpoint. Two guards stop that happening again: the trainer
 gets --finetune-from (weights loaded, schedule from zero), and this script
 measures reconstruction error on 32 held images before and after and refuses to
 finish unless it dropped.
+
+**Result of version 2 (9000 steps, 2.6 h): the fine-tune made it worse, and the
+guard said so.** Held-out error 11.66 -> 12.88/255; on four pictures read side by
+side 12.87 untouched against 14.02 tuned, with visibly less detail in the tuned
+one (samurai, picnic-basket weave, glasses). The untouched 192px checkpoint run
+on 256px input already gives a 32x32 grid at ~12/255, so the 1024-token corpus
+(kernels enc1024) uses it as it is. Note for anyone reading the training log: `rec`
+jumps from 0.07 to 0.33 at step 1000, but from there it includes the
+feature-matching term (rec = L1 + fm * feature_match), so that jump is mostly the
+extra term appearing, not reconstruction collapsing; the held-out number is the
+honest one. Kept for the record and in case a better recipe (lower adversarial
+weight, later discriminator) is ever worth trying.
 """
 
 import glob

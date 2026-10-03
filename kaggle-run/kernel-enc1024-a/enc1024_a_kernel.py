@@ -1,15 +1,23 @@
-"""Kaggle GPU cell: encode part of the corpus with the 256px / 1024-token tokenizer.
+"""Kaggle GPU cell: encode part of the corpus at 256px / 1024 tokens.
 
 Shards: ddb 0-3. Written for kernel enc1024-a; the four kernels together
 cover the same 4,017,878 pairs the 576-token corpus has, so the new model trains
 on identical data and the two tokenizers differ in nothing else.
 
-The ids mean something different from the 576-token ones — different grid,
-different fine-tuned weights — so nothing encoded earlier can be mixed in.
+The tokenizer is the UNTOUCHED 40000-step 192px checkpoint run on 256px input.
+A convolutional encoder does not care about resolution, so this gives a 32x32
+grid for free. We tried fine-tuning it at 256px (kernel vq256, 9000 steps, 2.6 h)
+and it got worse: held-out reconstruction error 11.66 -> 12.88/255, and on the
+same four pictures 12.87 untouched against 14.02 tuned, with visibly less detail
+in the tuned one. The first 1000 steps before the discriminator also did not
+improve it, so the adversarial terms are not the whole story.
+
+The ids still differ from the 576-token corpus — a different grid — so nothing
+encoded earlier can be mixed in.
 
 Checked before and after, because this project has been burned by "finished"
-meaning "ran": the tokenizer must be a real fine-tune (step within a plausible
-range, not the untouched 192px checkpoint at 40000), the token file must be
+meaning "ran": the tokenizer must be exactly the frozen 40000-step checkpoint,
+the token file must be
 exactly n x 1024 x 2 bytes, and a held sample must decode back to something
 close to its original, with the error printed.
 """
@@ -31,7 +39,7 @@ WORK = os.environ.get("GW_WORK", "/kaggle/working")
 SHARDS = ["gweird-ddb-0", "gweird-ddb-1", "gweird-ddb-2", "gweird-ddb-3"]
 TAG = "gwtok1024A"
 GRID, PER = 32, 1024
-LO, HI = [int(x) for x in os.environ.get("GW_STEP_RANGE", "1000,12000").split(",")]
+LO, HI = [int(x) for x in os.environ.get("GW_STEP_RANGE", "40000,40000").split(",")]
 
 if not torch.cuda.is_available() and not os.environ.get("GW_ALLOW_CPU"):
     raise SystemExit("brak GPU")
@@ -72,8 +80,8 @@ if len(ckpts) != 1:
 ck = torch.load(ckpts[0], map_location="cpu", weights_only=False)
 print(f"tokenizer z kroku {ck['step']}, arch {ck['arch']}", flush=True)
 if not LO <= ck["step"] <= HI:
-    raise SystemExit(f"krok {ck['step']} poza {LO}..{HI} — to nie jest "
-                     f"dostrojony tokenizer 256 px (40000 to nietkniete zrodlo 192 px)")
+    raise SystemExit(f"krok {ck['step']} poza {LO}..{HI} — oczekiwany "
+                     f"zamrozony tokenizer z kroku 40000")
 
 out = f"{WORK}/{TAG}"
 subprocess.run([sys.executable, "train/encode_corpus.py",

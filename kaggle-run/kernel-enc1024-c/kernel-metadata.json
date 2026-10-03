@@ -9,7 +9,7 @@
   "enable_internet": true,
   "machine_shape": "NvidiaTeslaT4",
   "dataset_sources": [
-    "jerzysukiennik/gweird-vqvae-256"
+    "jerzysukiennik/gweird-vqvae-576"
   ],
   "competition_sources": [],
   "kernel_sources": [
