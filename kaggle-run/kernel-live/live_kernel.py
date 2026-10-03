@@ -10,7 +10,13 @@ Sessions chain through kernel outputs: the checkpoint with the highest step
 among all attached inputs wins.
 """
 
-STEPS_TOTAL = 60000      # horyzont harmonogramu (jak 1.1, ta sama efektywna partia 64)
+# Horyzont 100000, nie 60000: Live ma 50000 krokow i wciaz nie rysuje obiektow, a
+# 60000 bylo tylko lustrem 1.1. Wznowienie z 50000 przy horyzoncie 100000 daje
+# tempo 1.69e-4 zamiast 4.93e-5 przy starym (cieply restart, 3.4x), a przy 75000
+# (koniec tej sesji) 7.11e-5. Policzone z train_ar.lr_at, nie z pamieci.
+# Tempo bazowe zostaje 3e-4: lrsweep (3e-4 / 8e-4 / 1.5e-3, 4000 krokow) nie
+# pokazal roznicy ani na stracie (7.92 / 7.75 / 7.85) ani na uzupelnianiu.
+STEPS_TOTAL = 100000
 MAX_STEPS   = 25000      # zmierzone 1.21 s/krok -> ~8.4 h; 36000 uderzylo w sciane 12 h na 35400 bez zapisu koncowego
 PROMPTS = ["a horse standing in a field", "a red double decker bus on a street",
            "a cat wearing sunglasses", "portrait of an old man with a beard",
