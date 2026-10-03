@@ -64,6 +64,10 @@ def main():
     p.add_argument("--log-every", type=int, default=100)
     p.add_argument("--ckpt-every", type=int, default=500)
     p.add_argument("--resume", action="store_true")
+    p.add_argument("--max-hours", type=float, default=0.0,
+                   help="zakoncz sesje po tylu godzinach, z koncowym checkpointem. "
+                        "Kaggle ubija sesje o 12 h bez ostrzezenia i bez zapisu, a "
+                        "szacunek czasu na krok juz dwa razy byl za optymistyczny")
     a = p.parse_args()
 
     os.makedirs(a.out, exist_ok=True)
@@ -133,6 +137,15 @@ def main():
         scaler.step(opt)
         scaler.update()
         step += 1
+
+        # Zegar, nie liczba krokow. Sesje liczone po szacunku s/krok uderzyly w
+        # sciane 12 h dwa razy (35400 z 36000 i 105500 z 106000), za kazdym razem
+        # bez koncowego zapisu i bez probki. Sufit ustawiony na biezacy krok
+        # uruchamia ten sam zapis co zwykle koniec sesji.
+        if a.max_hours and step < ceiling and \
+                (time.time() - t0) / 3600 >= a.max_hours:
+            print(f"limit czasu {a.max_hours} h — koncze na kroku {step}", flush=True)
+            ceiling = step
 
         if step % a.log_every == 0:
             print(f"step {step}/{ceiling}  loss {total:.4f}  "
