@@ -25,13 +25,20 @@ the same size — which is a claim about their setup, not ours. This exists so t
 two can be trained briefly on the same data and compared on pictures.
 """
 
+import sys
 from dataclasses import dataclass
+from pathlib import Path
 
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from model.gpt_base import Block, RMSNorm, build_rope_cache
+# By file path, as transformer.py does, not `from model.gpt_base import`: the Mac
+# runtime serves several projects and three of them ship a `model/` package. The
+# last time one leaked into sys.modules every photo edit failed for the rest of
+# the process's life, so this module must be loadable without owning the name.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from gpt_base import Block, RMSNorm, build_rope_cache  # noqa: E402
 
 
 @dataclass
@@ -138,7 +145,7 @@ def mask_ratio(u):
 
 @torch.no_grad()
 def generate(model, text_rows, cfg, steps=12, scale=4.0, temp=1.0,
-             choice_temp=4.5, init=None):
+             choice_temp=4.5, init=None, on_round=None):
     """Fill a whole image in `steps` rounds instead of 576.
 
     `init` turns this into editing: image-token ids with cfg.MASK where the
@@ -148,6 +155,10 @@ def generate(model, text_rows, cfg, steps=12, scale=4.0, temp=1.0,
     start out hidden, per row, not from the whole image — otherwise a hole of 144
     tokens would settle one token per round for ten rounds and the rest in a
     lump at the end.
+
+    `on_round(done, total)` is called after every round and may raise to stop:
+    the Mac uses it for the progress bar and for the stop button, which would
+    otherwise have to wait for the whole picture.
 
     Classifier-free guidance rides along the batch exactly as in the
     autoregressive sampler: the prompt and a blanked copy are predicted
@@ -247,5 +258,8 @@ def generate(model, text_rows, cfg, steps=12, scale=4.0, temp=1.0,
             ranks = conf.argsort(dim=1).argsort(dim=1)
             img = torch.where(ranks < keep_masked[:, None],
                               torch.full_like(img, cfg.MASK), img)
+
+        if on_round is not None:
+            on_round(step + 1, steps)
 
     return img - lo
