@@ -81,6 +81,12 @@ def main():
     p.add_argument("--ckpt-every", type=int, default=500)
     p.add_argument("--resume", action="store_true")
     p.add_argument("--label-smoothing", type=float, default=0.1)
+    p.add_argument("--init-from", default="",
+                   help="wagi startowe z innego checkpointu (krok liczony od zera, "
+                        "swiezy optymalizator). Dziala tylko w pierwszej sesji")
+    p.add_argument("--max-hours", type=float, default=0.0,
+                   help="zakoncz sesje po tylu godzinach, z koncowym checkpointem "
+                        "(Kaggle ubija sesje o 12 h bez zapisu)")
     a = p.parse_args()
 
     dev = "cuda" if torch.cuda.is_available() else "cpu"
@@ -107,6 +113,20 @@ def main():
 
     step = 0
     ckpt_path = os.path.join(a.out, "maskgit.pt")
+    # Start z cudzych wag. Sensowne, bo siatka tokenow zmienia tylko dlugosc
+    # sekwencji, a model nie ma absolutnych pozycji (RoPE), wiec te same wagi
+    # laduja sie w modelu z inna liczba tokenow obrazu; slownik kodow jest ten
+    # sam, jesli tokenizer jest ten sam. Ladowanie SCISLE: brakujacy lub
+    # nadmiarowy klucz ma wywrocic trening, nie zostac pominiety. Tylko gdy nie
+    # ma checkpointu wlasnej sesji, zeby kolejna sesja wznawiala, a nie
+    # zaczynala od zrodla.
+    if a.init_from and not (a.resume and os.path.exists(ckpt_path)):
+        src = torch.load(a.init_from, map_location="cpu", weights_only=False)
+        raw.load_state_dict(src["model"])
+        sc = src.get("cfg", {})
+        print(f"wagi startowe z {a.init_from} (krok zrodlowy {src.get('step', '?')}, "
+              f"image_len zrodla {sc.get('image_len', '?')} -> {cfg.image_len}); "
+              f"krok od zera, swiezy optymalizator", flush=True)
     if a.resume and os.path.exists(ckpt_path):
         ck = torch.load(ckpt_path, map_location="cpu", weights_only=False)
         raw.load_state_dict(ck["model"])
@@ -146,6 +166,13 @@ def main():
         scaler.step(opt)
         scaler.update()
         step += 1
+
+        # Zegar, nie liczba krokow — te same powody co w train_ar.py: dwie sesje
+        # liczone po szacunku uderzyly w sciane 12 h bez koncowego zapisu.
+        if a.max_hours and step < ceiling and \
+                (time.time() - t0) / 3600 >= a.max_hours:
+            print(f"limit czasu {a.max_hours} h — koncze na kroku {step}", flush=True)
+            ceiling = step
 
         if step % a.log_every == 0:
             print(f"step {step}/{ceiling}  loss {total:.4f}  "
