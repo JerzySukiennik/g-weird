@@ -43,8 +43,8 @@ def main():
                    metavar=("R0", "C0", "R1", "C1"),
                    help="prostokat w WSPOLRZEDNYCH TOKENOW, [R0,R1) x [C0,C1)")
     p.add_argument("--steps", type=int, default=12)
-    p.add_argument("--cfg-scale", type=float, default=2.0)
-    p.add_argument("--temp", type=float, default=0.7)
+    p.add_argument("--cfg-scale", type=float, default=4.0)
+    p.add_argument("--temp", type=float, default=1.0)
     p.add_argument("--seed", type=int, default=0)
     p.add_argument("--out", default="out/edit.png")
     a = p.parse_args()

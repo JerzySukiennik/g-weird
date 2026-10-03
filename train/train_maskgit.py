@@ -32,7 +32,33 @@ from train.corpus import TokenPairs  # noqa: E402
 from train.train_ar import lr_at                                # noqa: E402
 
 
-def collate(batch, cfg, drop_p):
+def region_hidden(n, grid, lo=0.08, hi=0.6):
+    """(n, grid*grid) bool: each row hides the union of 1-3 random rectangles
+    covering roughly lo..hi of the picture, aspect ratio between 1:2 and 2:1.
+
+    Random scattered tokens never teach what a region edit needs. A hole made of
+    scattered tokens has neighbours everywhere to copy from; a rectangle does not,
+    and its content has to come from the caption and the far context together.
+    Tested on the 50000-step Live checkpoint: the context is kept perfectly but a
+    new caption does not change the content, because training never showed it a
+    contiguous hole.
+    """
+    out = torch.zeros(n, grid, grid, dtype=torch.bool)
+    for i in range(n):
+        frac = lo + (hi - lo) * float(torch.rand(()))
+        boxes = 1 + int(torch.randint(0, 3, ()))
+        for _ in range(boxes):
+            aspect = math.exp((float(torch.rand(())) - 0.5) * 2 * math.log(2.0))
+            area = frac / boxes * grid * grid
+            h = max(2, min(grid, int(round(math.sqrt(area * aspect)))))
+            w = max(2, min(grid, int(round(math.sqrt(area / aspect)))))
+            r0 = int(torch.randint(0, grid - h + 1, ()))
+            c0 = int(torch.randint(0, grid - w + 1, ()))
+            out[i, r0:r0 + h, c0:c0 + w] = True
+    return out.view(n, grid * grid)
+
+
+def collate(batch, cfg, drop_p, region_p=0.0):
     # TokenPairs oddaje (sekwencja, dlugosc podpisu); tu potrzebna jest tylko
     # sekwencja. Pierwszy bieg Live padl na tym w pierwszej partii — test
     # dymny sprawdzal dataset, ale nie collate.
@@ -50,6 +76,14 @@ def collate(batch, cfg, drop_p):
     order = scores.argsort(dim=1)
     ranks = order.argsort(dim=1)
     hidden = ranks < k[:, None]
+    if region_p > 0:
+        # Czesc przykladow dostaje zamiast tego ciagle prostokaty — to jest
+        # trening pod edycje zamalowanego obszaru.
+        use = torch.rand(seqs.size(0)) < region_p
+        if bool(use.any()):
+            grid = int(round(math.sqrt(cfg.image_len)))
+            hidden = hidden.clone()
+            hidden[use] = region_hidden(int(use.sum()), grid)
     img = img.masked_fill(hidden, cfg.MASK)
     seqs = torch.cat([seqs[:, :cfg.text_len], img], dim=1)
 
@@ -81,6 +115,9 @@ def main():
     p.add_argument("--ckpt-every", type=int, default=500)
     p.add_argument("--resume", action="store_true")
     p.add_argument("--label-smoothing", type=float, default=0.1)
+    p.add_argument("--region-p", type=float, default=0.0,
+                   help="czesc przykladow z ciaglymi prostokatami zamiast losowych "
+                        "tokenow (trening pod edycje obszaru); 0 = jak dotad")
     p.add_argument("--init-from", default="",
                    help="wagi startowe z innego checkpointu (krok liczony od zera, "
                         "swiezy optymalizator). Dziala tylko w pierwszej sesji")
@@ -101,7 +138,7 @@ def main():
     ds = TokenPairs(a.data, cfg, insert_bos=False)
     dl = DataLoader(ds, batch_size=a.batch, shuffle=True, num_workers=a.workers,
                     drop_last=True, pin_memory=(dev == "cuda"),
-                    collate_fn=lambda b: collate(b, cfg, a.text_dropout))
+                    collate_fn=lambda b: collate(b, cfg, a.text_dropout, a.region_p))
 
     model = MaskGIT(cfg).to(dev)
     raw = model

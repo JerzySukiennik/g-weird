@@ -138,6 +138,10 @@ def train(batch, accum, more=()):
          "--out", f"{WORK}/run", "--steps", str(STEPS_TOTAL),
          "--max-steps", str(MAX_STEPS), "--batch", str(batch), "--accum", str(accum),
          "--lr", "3e-4", "--warmup", "1000", "--label-smoothing", "0.1",
+         # 40% przykladow z ciaglymi prostokatami: bez tego nowy opis nie zmienia
+         # tresci zamalowanego obszaru (sprawdzone na Live 50k: kontekst
+         # zachowany, tekst ignorowany).
+         "--region-p", "0.4",
          "--workers", os.environ.get("GW_WORKERS", "4"), "--log-every", "100",
          "--ckpt-every", "1000", "--max-hours", str(MAX_HOURS), "--resume",
          *extra, *more]).returncode
